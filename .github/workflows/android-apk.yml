@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc57e049f5da53ab83366a386ed2.dl.dropboxusercontent.com/cd/0/get/DKHBHG8WoHzt2ouR-qfzJ6uoxKp8zbSyh1KmOYpKpR2i1YPC8zkfAC3L6qhTDoXnfkpEWc5WWmYJz3KJAp1yr09sUSU1_J88XBn28PTvFWvJj2jD-XovDV1NOIDCI9ysI4yORdOJFHikbNN_ewi5pieFducaw9bcpKSC_pzE2vcX5A/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uca554f035536a885cea9c4a451b.dl.dropboxusercontent.com/cd/0/get/DKEVfH-0TMtTayY-__3wkBeeMHeJ3UVK43D87hAStstEglDi7b8xvqZiRfYT41HpP7k0i5D-l9hJNyusviquwaZcnBPnpdBQvckMZfETRkyfQ0QwbI7PFUMGbrflOG1rAfwZXbD77nCmNuSLwb4IbZuJGDwlRe8j_DHpqzKTL4YMxQ/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -25,6 +25,30 @@ jobs:
           PROJECT_DIR="$GITHUB_WORKSPACE/source/Flatworld_Creative_Godot"
           test -f "$PROJECT_DIR/project.godot"
           test -f "$PROJECT_DIR/export_presets.cfg"
+          # Apply the Android-required texture import option only to this temporary build copy.
+          python3 - "$PROJECT_DIR/project.godot" <<'PY'
+          from pathlib import Path
+          import sys
+          project_file = Path(sys.argv[1])
+          project_text = project_file.read_text()
+          key = "textures/vram_compression/import_etc2_astc"
+          lines = project_text.splitlines()
+          found = False
+          for index, line in enumerate(lines):
+              if line.startswith(key + "="):
+                  lines[index] = key + "=true"
+                  found = True
+                  break
+          if not found:
+              for index, line in enumerate(lines):
+                  if line.strip() == "[rendering]":
+                      lines.insert(index + 1, key + "=true")
+                      found = True
+                      break
+          if not found:
+              raise SystemExit("No [rendering] section in project.godot")
+          project_file.write_text("\\n".join(lines) + "\\n")
+          PY
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Set up Java for Godot Android export
