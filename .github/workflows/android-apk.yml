@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc191bbfa5de0b5cf288ed46bd5f.dl.dropboxusercontent.com/cd/0/get/DKGbrvRFL9aM7uyKMun4NZrBus-QT11WIBSg0jXIWJmRmrC_sa7vAdLeoMjszaf6U_3ggeBrjvx1ipKWmrhcqgQ9pfuoqTEP2eC0gTxSGzhoAnNQlMaPBPULcy7q1J3I5dHdaf7DtywCHetLuiGFAK2wbBLrCHTdJp_HrzWLV4NAFA/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uc5330b09a32c77ef1633cded521.dl.dropboxusercontent.com/cd/0/get/DKGEK3FvDbh4tVAExVikKKkkQGr8W8iHYjpwgK-ALae7xjoo2z7YifI1YdLctR7XPV6SksEdy_ZRDez2QxUTMlI1eJO59WFa7DrwrFBSSiGljcR6I6iMWURqa_dWtrSKpBPhPo6G6k7wN-GkCrUQFkAKVKx_QPHAWwcaDCZeZ1K7WA/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -809,6 +809,7 @@ jobs:
               settings = settings.replace('window/stretch/mode="canvas_items"', 'window/stretch/mode="canvas_items"\nwindow/stretch/aspect="expand"')
           project_settings.write_text(settings)
           PY
+
       - name: Fix vertical atlas UVs and cull internal fluid faces
         shell: bash
         run: |
@@ -931,6 +932,7 @@ jobs:
           version_path.write_text("0.5.8\n")
           print("Applied upright vertical UV mapping and same-fluid internal-face culling.")
           PY
+
       - name: Correct face winding and optimize chunk generation
         shell: bash
         run: |
@@ -1104,6 +1106,7 @@ jobs:
           (project / "VERSION.txt").write_text("0.5.9\n")
           print(f"Fixed {changed} quad index sites and optimized repeated base-block/light-source work.")
           PY
+
       - name: Set up Java for Godot Android export
         uses: actions/setup-java@v4
         with:
@@ -1180,12 +1183,12 @@ jobs:
               settings = pattern.sub(key + '="gl_compatibility"', settings, count=1)
           settings = re.sub(r'^config/version=.*$', 'config/version="0.6.4"', settings, count=1, flags=re.MULTILINE)
           settings_path.write_text(settings)
-          (project / "VERSION.txt").write_text("0.6.3\n")
+          (project / "VERSION.txt").write_text("0.6.4\n")
 
           preset_path = project / "export_presets.cfg"
           preset = preset_path.read_text()
           preset = re.sub(r'^version/code=.*$', 'version/code=604', preset, count=1, flags=re.MULTILINE)
-          preset = re.sub(r'^version/name=.*$', 'version/name="0.6.3"', preset, count=1, flags=re.MULTILINE)
+          preset = re.sub(r'^version/name=.*$', 'version/name="0.6.4"', preset, count=1, flags=re.MULTILINE)
           preset_path.write_text(preset)
 
           # Local chunk-space mesh coordinates reduce floating-point precision loss:
@@ -1735,8 +1738,8 @@ jobs:
 
           docs = project / "docs"
           docs.mkdir(exist_ok=True)
-          (docs / "RENDERING_FIX_0.6.3.md").write_text(
-              "# Rendering and performance fix 0.6.3\n\n"
+          (docs / "RENDERING_FIX_0.6.4.md").write_text(
+              "# Rendering and performance fix 0.6.4\n\n"
               "Previous Android builds used Godot Mobile/Vulkan. Godot issue #115217 documents horizontal "
               "3D corruption on some Android GPU/driver combinations; Compatibility/OpenGL ES is a documented "
               "workaround. This build selects gl_compatibility for default and mobile rendering and runs a "
@@ -1760,6 +1763,7 @@ jobs:
               raise SystemExit("Cube mesh seam-culling lookup missing")
           print("Compatibility renderer selected; seam faces culled from deterministic world data; per-frame CPU work reduced.")
           PY
+
       - name: Remove shadow/foliage line artefacts and reduce frame-time overhead
         shell: bash
         run: |
@@ -1858,660 +1862,7 @@ jobs:
           main_path.write_text(main)
           print("Added terrain+vegetation clearance and a bright new-world starting time.")
           PY
-      - name: Import, smoke-test Compatibility renderer, and export Android APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/visual" "$GITHUB_WORKSPACE/visual-artifacts"
-          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --import 2>&1 | tee "$RUNNER_TEMP/godot-import.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-import.log"; then
-            echo "GDScript errors found during import; refusing to publish a broken APK."
-            exit 1
-          fi
-          timeout 120s "$GODOT_BIN" --headless --path "$PROJECT_DIR" --quit-after 3 2>&1 | tee "$RUNNER_TEMP/godot-runtime.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-runtime.log"; then
-            echo "Runtime startup errors detected; refusing to publish this APK."
-            exit 1
-          fi
-          if ! grep -q "Flatworld startup: touch HUD created" "$RUNNER_TEMP/godot-runtime.log"; then
-            echo "The main scene did not finish creating the player and touch HUD."
-            exit 1
-          fi
-          if ! grep -q "Flatworld spawn invariant:" "$RUNNER_TEMP/godot-runtime.log"; then
-            echo "Spawn surface invariant was not logged."
-            exit 1
-          fi
-          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq xvfb ffmpeg
-          fi
-          timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 40 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Graphical Compatibility startup reported an engine/script error."
-            exit 1
-          fi
-          if ! grep -Eqi "OpenGL API|OpenGL ES" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Visual test did not report an OpenGL renderer."
-            exit 1
-          fi
-          test -s "$RUNNER_TEMP/visual/compatibility-smoke.avi"
-          ffmpeg -y -loglevel error -ss 3 -i "$RUNNER_TEMP/visual/compatibility-smoke.avi" -frames:v 1 "$RUNNER_TEMP/visual/compatibility-smoke.png"
-          test -s "$RUNNER_TEMP/visual/compatibility-smoke.png"
-          python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" "$RUNNER_TEMP/godot-visual.log" <<'PY'
-          from PIL import Image
-          from pathlib import Path
-          import re, statistics, sys
-          image_path, log_path = map(Path, sys.argv[1:])
-          image = Image.open(image_path).convert("RGB")
-          # On the standard seed/camera, x=1030..1139 y=100..349 is open sky (no mesh/HUD).
-          # Any near-black pixels here indicate the original screen-wide dash corruption or a new leak.
-          sky = image.crop((1030, 100, 1140, 350))
-          dark = sum(1 for rgb in sky.getdata() if max(rgb) < 60)
-          if dark > 4:
-              raise SystemExit(f"Visual regression: {dark} dark pixels in clear sky region (limit 4)")
-          log = log_path.read_text(errors="replace")
-          timings = [int(x) for x in re.findall(r"CHUNK_LOAD_MS:.*?(\d+)\s*$", log, re.MULTILINE)]
-          if not timings:
-              raise SystemExit("No chunk-load timing measurements recorded")
-          print(f"Visual regression passed: dark_sky_pixels={dark}; chunk_load_median_ms={statistics.median(timings):.1f}; samples={timings}")
-          PY
-          python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" <<'PY'
-          from PIL import Image, ImageStat
-          import sys
-          image = Image.open(sys.argv[1]).convert("RGB")
-          mean = sum(ImageStat.Stat(image).mean) / 3.0
-          pixels = list(image.getdata())
-          visible_ratio = sum(1 for r, g, b in pixels if max(r, g, b) > 24) / len(pixels)
-          print(f"VISUAL_ASSERT: mean_rgb={mean:.2f}/255 pixels_over_24={visible_ratio:.1%}")
-          if mean < 18.0 or visible_ratio < 0.10:
-              raise SystemExit("Graphical smoke frame is effectively black; do not publish APK.")
-          PY
-          CHUNK_LOAD_COUNT="$(grep -c "CHUNK_LOAD_MS:" "$RUNNER_TEMP/godot-visual.log" || true)"
-          if [ "$CHUNK_LOAD_COUNT" -lt 9 ]; then
-            echo "The visual screenshot was taken before the full 3x3 resident chunk ring loaded (count=$CHUNK_LOAD_COUNT)."
-            exit 1
-          fi
-          python3 - "$RUNNER_TEMP/godot-visual.log" <<'PY'
-          import re, sys
-          times = [int(value) for value in re.findall(r"CHUNK_LOAD_MS:.*? (\d+)", open(sys.argv[1], encoding="utf-8").read())]
-          if len(times) < 9:
-              raise SystemExit(f"Only {len(times)} chunks loaded during visual smoke test")
-          print("Chunk generation timing ms: count=", len(times), "max=", max(times), "avg=", round(sum(times)/len(times), 1))
-          PY
-          cp "$RUNNER_TEMP/visual/compatibility-smoke.png" "$GITHUB_WORKSPACE/visual-artifacts/compatibility-smoke.png"
-          cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
-          echo "Headless startup and graphical Compatibility smoke tests passed."
-          mkdir -p "$PROJECT_DIR/build"
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-export.log"; then
-            echo "GDScript errors found during export; refusing to publish a broken APK."
-            exit 1
-          fi
-          test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk"
-          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk"
-          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.3-Source.zip" <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile, ZIP_DEFLATED
-          import sys
-          project = Path(sys.argv[1])
-          output = Path(sys.argv[2])
-          with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=6) as archive:
-              for path in project.rglob("*"):
-                  if not path.is_file():
-                      continue
-                  relative = path.relative_to(project)
-                  if ".godot" in relative.parts or "build" in relative.parts:
-                      continue
-                  archive.write(path, Path(project.name) / relative)
-          print(f"Packaged matching source: {output.stat().st_size} bytes")
-          PY
 
-      - name: Publish Android APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.3-Android
-          path: source/Flatworld_Creative_Godot/build/Flatworld-Creative-0.6.3.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish patched source project
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.3-Source
-          path: Flatworld-Creative-0.6.3-Source.zip
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish Compatibility-rendered screenshot and logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.3-Visual-Smoke
-          path: visual-artifacts/*
-          if-no-files-found: error
-          retention-days: 14
-, 'config/version="0.6.4"', settings, count=1, flags=re.MULTILINE)
-          if n != 1:
-              raise SystemExit("Application version setting not found")
-          settings_path.write_text(settings)
-          (project / "VERSION.txt").write_text("0.6.4\n")
-          preset_path = project / "export_presets.cfg"
-          preset = preset_path.read_text()
-          preset, n = re.subn(r'^version/code=.*
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - "$PROJECT_DIR/scripts/world.gd" "$PROJECT_DIR/scripts/main.gd" <<'PY'
-          from pathlib import Path
-          import sys
-
-          world_path = Path(sys.argv[1])
-          main_path = Path(sys.argv[2])
-          world = world_path.read_text()
-
-          # Spawn search only checked base terrain. Trees are generated after the spawn
-          # is selected, so a perfectly "safe" terrain column could become a trunk/leaf
-          # column and put the camera inside opaque geometry. Reject candidates whose
-          # deterministic vegetation pass would place a tree within the player's eye area.
-          safe_signature = "func _is_safe_spawn_column(x: int, z: int) -> bool:"
-          next_func = "\nfunc grow_poplar_sapling"
-          start = world.find(safe_signature)
-          end = world.find(next_func, start)
-          if start < 0 or end < 0:
-              raise SystemExit("Safe spawn helper boundaries missing")
-          safe_fn = world[start:end]
-          return_marker = "    return true"
-          if safe_fn.count(return_marker) != 1:
-              raise SystemExit("Safe spawn return marker count mismatch")
-          safe_fn = safe_fn.replace(
-              return_marker,
-              "    if _spawn_has_tree_clearance(x, z, ground_y):\n"
-              "        return true\n"
-              "    return false",
-              1,
-          )
-          helper = """func _spawn_has_tree_clearance(x: int, z: int, ground_y: int) -> bool:
-              # Replicate the seeded tree roll for nearby columns. A tree crown reaches
-              # the player eye-height from roughly ground+2 to ground+4.
-              for tree_x in range(x - 3, x + 4):
-                  for tree_z in range(z - 3, z + 4):
-                      var tree_ground := _terrain_height_at(tree_x, tree_z)
-                      if tree_ground <= SEA_LEVEL or absi(tree_ground - ground_y) > 3:
-                          continue
-                      var tree_biome := get_biome_at(tree_x, tree_z)
-                      if tree_biome in ["desert", "badlands"]:
-                          continue
-                      var rng := RandomNumberGenerator.new()
-                      rng.seed = int(seed_value + tree_x * 73856093 + tree_z * 19349663)
-                      var roll := rng.randi_range(0, 999)
-                      if tree_biome == "dappled_forest" and roll < 4:
-                          continue
-                      var chance := 27 if tree_biome in ["forest", "dappled_forest", "snowy"] else 8
-                      if roll < chance and maxi(absi(tree_x - x), absi(tree_z - z)) <= 2:
-                          var trunk_height := rng.randi_range(4, 6)
-                          var crown_bottom := tree_ground + trunk_height - 2
-                          var eye_y := ground_y + 2
-                          if crown_bottom <= eye_y and eye_y <= tree_ground + trunk_height + 1:
-                              return false
-              return true
-
-          """
-          world = world[:start] + helper + safe_fn + world[end:]
-          world_path.write_text(world)
-
-          # A new world starts in daylight, rather than at a dim sunrise with low
-          # ambient light. Saved-world time is left untouched.
-          main = main_path.read_text()
-          old_day_line = '    _day_time = fposmod(float(saved.get("day_time", 1000.0)), 24000.0)'
-          bright_day_line = '    _day_time = fposmod(float(saved.get("day_time", 6000.0)), 24000.0)'
-          startup_end = main.find("func _is_night_time")
-          if startup_end < 0:
-              raise SystemExit("Main startup boundary for day default was not found")
-          startup = main[:startup_end]
-          remainder = main[startup_end:]
-          if startup.count(old_day_line) == 1:
-              startup = startup.replace(old_day_line, bright_day_line, 1)
-          elif startup.count(bright_day_line) == 1:
-              pass
-          else:
-              raise SystemExit("Startup daylight default was not uniquely identifiable")
-          main = startup + remainder
-          main_path.write_text(main)
-          print("Added terrain+vegetation clearance and a bright new-world starting time.")
-          PY
-      - name: Import, smoke-test Compatibility renderer, and export Android APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/visual" "$GITHUB_WORKSPACE/visual-artifacts"
-          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --import 2>&1 | tee "$RUNNER_TEMP/godot-import.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-import.log"; then
-            echo "GDScript errors found during import; refusing to publish a broken APK."
-            exit 1
-          fi
-          timeout 120s "$GODOT_BIN" --headless --path "$PROJECT_DIR" --quit-after 3 2>&1 | tee "$RUNNER_TEMP/godot-runtime.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-runtime.log"; then
-            echo "Runtime startup errors detected; refusing to publish this APK."
-            exit 1
-          fi
-          if ! grep -q "Flatworld startup: touch HUD created" "$RUNNER_TEMP/godot-runtime.log"; then
-            echo "The main scene did not finish creating the player and touch HUD."
-            exit 1
-          fi
-          if ! grep -q "Flatworld spawn invariant:" "$RUNNER_TEMP/godot-runtime.log"; then
-            echo "Spawn surface invariant was not logged."
-            exit 1
-          fi
-          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq xvfb ffmpeg
-          fi
-          timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 40 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Graphical Compatibility startup reported an engine/script error."
-            exit 1
-          fi
-          if ! grep -Eqi "OpenGL API|OpenGL ES" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Visual test did not report an OpenGL renderer."
-            exit 1
-          fi
-          test -s "$RUNNER_TEMP/visual/compatibility-smoke.avi"
-          ffmpeg -y -loglevel error -ss 3 -i "$RUNNER_TEMP/visual/compatibility-smoke.avi" -frames:v 1 "$RUNNER_TEMP/visual/compatibility-smoke.png"
-          test -s "$RUNNER_TEMP/visual/compatibility-smoke.png"
-          python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" <<'PY'
-          from PIL import Image, ImageStat
-          import sys
-          image = Image.open(sys.argv[1]).convert("RGB")
-          mean = sum(ImageStat.Stat(image).mean) / 3.0
-          pixels = list(image.getdata())
-          visible_ratio = sum(1 for r, g, b in pixels if max(r, g, b) > 24) / len(pixels)
-          print(f"VISUAL_ASSERT: mean_rgb={mean:.2f}/255 pixels_over_24={visible_ratio:.1%}")
-          if mean < 18.0 or visible_ratio < 0.10:
-              raise SystemExit("Graphical smoke frame is effectively black; do not publish APK.")
-          PY
-          CHUNK_LOAD_COUNT="$(grep -c "CHUNK_LOAD_MS:" "$RUNNER_TEMP/godot-visual.log" || true)"
-          if [ "$CHUNK_LOAD_COUNT" -lt 9 ]; then
-            echo "The visual screenshot was taken before the full 3x3 resident chunk ring loaded (count=$CHUNK_LOAD_COUNT)."
-            exit 1
-          fi
-          python3 - "$RUNNER_TEMP/godot-visual.log" <<'PY'
-          import re, sys
-          times = [int(value) for value in re.findall(r"CHUNK_LOAD_MS:.*? (\d+)", open(sys.argv[1], encoding="utf-8").read())]
-          if len(times) < 9:
-              raise SystemExit(f"Only {len(times)} chunks loaded during visual smoke test")
-          print("Chunk generation timing ms: count=", len(times), "max=", max(times), "avg=", round(sum(times)/len(times), 1))
-          PY
-          cp "$RUNNER_TEMP/visual/compatibility-smoke.png" "$GITHUB_WORKSPACE/visual-artifacts/compatibility-smoke.png"
-          cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
-          echo "Headless startup and graphical Compatibility smoke tests passed."
-          mkdir -p "$PROJECT_DIR/build"
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-export.log"; then
-            echo "GDScript errors found during export; refusing to publish a broken APK."
-            exit 1
-          fi
-          test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk"
-          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk"
-          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.3-Source.zip" <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile, ZIP_DEFLATED
-          import sys
-          project = Path(sys.argv[1])
-          output = Path(sys.argv[2])
-          with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=6) as archive:
-              for path in project.rglob("*"):
-                  if not path.is_file():
-                      continue
-                  relative = path.relative_to(project)
-                  if ".godot" in relative.parts or "build" in relative.parts:
-                      continue
-                  archive.write(path, Path(project.name) / relative)
-          print(f"Packaged matching source: {output.stat().st_size} bytes")
-          PY
-
-      - name: Publish Android APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.3-Android
-          path: source/Flatworld_Creative_Godot/build/Flatworld-Creative-0.6.3.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish patched source project
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.3-Source
-          path: Flatworld-Creative-0.6.3-Source.zip
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish Compatibility-rendered screenshot and logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.3-Visual-Smoke
-          path: visual-artifacts/*
-          if-no-files-found: error
-          retention-days: 14
-, 'version/code=604', preset, count=1, flags=re.MULTILINE)
-          if n != 1:
-              raise SystemExit("Android version-code field not found")
-          preset, n = re.subn(r'^version/name=.*
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - "$PROJECT_DIR/scripts/world.gd" "$PROJECT_DIR/scripts/main.gd" <<'PY'
-          from pathlib import Path
-          import sys
-
-          world_path = Path(sys.argv[1])
-          main_path = Path(sys.argv[2])
-          world = world_path.read_text()
-
-          # Spawn search only checked base terrain. Trees are generated after the spawn
-          # is selected, so a perfectly "safe" terrain column could become a trunk/leaf
-          # column and put the camera inside opaque geometry. Reject candidates whose
-          # deterministic vegetation pass would place a tree within the player's eye area.
-          safe_signature = "func _is_safe_spawn_column(x: int, z: int) -> bool:"
-          next_func = "\nfunc grow_poplar_sapling"
-          start = world.find(safe_signature)
-          end = world.find(next_func, start)
-          if start < 0 or end < 0:
-              raise SystemExit("Safe spawn helper boundaries missing")
-          safe_fn = world[start:end]
-          return_marker = "    return true"
-          if safe_fn.count(return_marker) != 1:
-              raise SystemExit("Safe spawn return marker count mismatch")
-          safe_fn = safe_fn.replace(
-              return_marker,
-              "    if _spawn_has_tree_clearance(x, z, ground_y):\n"
-              "        return true\n"
-              "    return false",
-              1,
-          )
-          helper = """func _spawn_has_tree_clearance(x: int, z: int, ground_y: int) -> bool:
-              # Replicate the seeded tree roll for nearby columns. A tree crown reaches
-              # the player eye-height from roughly ground+2 to ground+4.
-              for tree_x in range(x - 3, x + 4):
-                  for tree_z in range(z - 3, z + 4):
-                      var tree_ground := _terrain_height_at(tree_x, tree_z)
-                      if tree_ground <= SEA_LEVEL or absi(tree_ground - ground_y) > 3:
-                          continue
-                      var tree_biome := get_biome_at(tree_x, tree_z)
-                      if tree_biome in ["desert", "badlands"]:
-                          continue
-                      var rng := RandomNumberGenerator.new()
-                      rng.seed = int(seed_value + tree_x * 73856093 + tree_z * 19349663)
-                      var roll := rng.randi_range(0, 999)
-                      if tree_biome == "dappled_forest" and roll < 4:
-                          continue
-                      var chance := 27 if tree_biome in ["forest", "dappled_forest", "snowy"] else 8
-                      if roll < chance and maxi(absi(tree_x - x), absi(tree_z - z)) <= 2:
-                          var trunk_height := rng.randi_range(4, 6)
-                          var crown_bottom := tree_ground + trunk_height - 2
-                          var eye_y := ground_y + 2
-                          if crown_bottom <= eye_y and eye_y <= tree_ground + trunk_height + 1:
-                              return false
-              return true
-
-          """
-          world = world[:start] + helper + safe_fn + world[end:]
-          world_path.write_text(world)
-
-          # A new world starts in daylight, rather than at a dim sunrise with low
-          # ambient light. Saved-world time is left untouched.
-          main = main_path.read_text()
-          old_day_line = '    _day_time = fposmod(float(saved.get("day_time", 1000.0)), 24000.0)'
-          bright_day_line = '    _day_time = fposmod(float(saved.get("day_time", 6000.0)), 24000.0)'
-          startup_end = main.find("func _is_night_time")
-          if startup_end < 0:
-              raise SystemExit("Main startup boundary for day default was not found")
-          startup = main[:startup_end]
-          remainder = main[startup_end:]
-          if startup.count(old_day_line) == 1:
-              startup = startup.replace(old_day_line, bright_day_line, 1)
-          elif startup.count(bright_day_line) == 1:
-              pass
-          else:
-              raise SystemExit("Startup daylight default was not uniquely identifiable")
-          main = startup + remainder
-          main_path.write_text(main)
-          print("Added terrain+vegetation clearance and a bright new-world starting time.")
-          PY
-      - name: Import, smoke-test Compatibility renderer, and export Android APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/visual" "$GITHUB_WORKSPACE/visual-artifacts"
-          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --import 2>&1 | tee "$RUNNER_TEMP/godot-import.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-import.log"; then
-            echo "GDScript errors found during import; refusing to publish a broken APK."
-            exit 1
-          fi
-          timeout 120s "$GODOT_BIN" --headless --path "$PROJECT_DIR" --quit-after 3 2>&1 | tee "$RUNNER_TEMP/godot-runtime.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-runtime.log"; then
-            echo "Runtime startup errors detected; refusing to publish this APK."
-            exit 1
-          fi
-          if ! grep -q "Flatworld startup: touch HUD created" "$RUNNER_TEMP/godot-runtime.log"; then
-            echo "The main scene did not finish creating the player and touch HUD."
-            exit 1
-          fi
-          if ! grep -q "Flatworld spawn invariant:" "$RUNNER_TEMP/godot-runtime.log"; then
-            echo "Spawn surface invariant was not logged."
-            exit 1
-          fi
-          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq xvfb ffmpeg
-          fi
-          timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 40 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Graphical Compatibility startup reported an engine/script error."
-            exit 1
-          fi
-          if ! grep -Eqi "OpenGL API|OpenGL ES" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Visual test did not report an OpenGL renderer."
-            exit 1
-          fi
-          test -s "$RUNNER_TEMP/visual/compatibility-smoke.avi"
-          ffmpeg -y -loglevel error -ss 3 -i "$RUNNER_TEMP/visual/compatibility-smoke.avi" -frames:v 1 "$RUNNER_TEMP/visual/compatibility-smoke.png"
-          test -s "$RUNNER_TEMP/visual/compatibility-smoke.png"
-          python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" <<'PY'
-          from PIL import Image, ImageStat
-          import sys
-          image = Image.open(sys.argv[1]).convert("RGB")
-          mean = sum(ImageStat.Stat(image).mean) / 3.0
-          pixels = list(image.getdata())
-          visible_ratio = sum(1 for r, g, b in pixels if max(r, g, b) > 24) / len(pixels)
-          print(f"VISUAL_ASSERT: mean_rgb={mean:.2f}/255 pixels_over_24={visible_ratio:.1%}")
-          if mean < 18.0 or visible_ratio < 0.10:
-              raise SystemExit("Graphical smoke frame is effectively black; do not publish APK.")
-          PY
-          CHUNK_LOAD_COUNT="$(grep -c "CHUNK_LOAD_MS:" "$RUNNER_TEMP/godot-visual.log" || true)"
-          if [ "$CHUNK_LOAD_COUNT" -lt 9 ]; then
-            echo "The visual screenshot was taken before the full 3x3 resident chunk ring loaded (count=$CHUNK_LOAD_COUNT)."
-            exit 1
-          fi
-          python3 - "$RUNNER_TEMP/godot-visual.log" <<'PY'
-          import re, sys
-          times = [int(value) for value in re.findall(r"CHUNK_LOAD_MS:.*? (\d+)", open(sys.argv[1], encoding="utf-8").read())]
-          if len(times) < 9:
-              raise SystemExit(f"Only {len(times)} chunks loaded during visual smoke test")
-          print("Chunk generation timing ms: count=", len(times), "max=", max(times), "avg=", round(sum(times)/len(times), 1))
-          PY
-          cp "$RUNNER_TEMP/visual/compatibility-smoke.png" "$GITHUB_WORKSPACE/visual-artifacts/compatibility-smoke.png"
-          cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
-          echo "Headless startup and graphical Compatibility smoke tests passed."
-          mkdir -p "$PROJECT_DIR/build"
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-export.log"; then
-            echo "GDScript errors found during export; refusing to publish a broken APK."
-            exit 1
-          fi
-          test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk"
-          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk"
-          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.3-Source.zip" <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile, ZIP_DEFLATED
-          import sys
-          project = Path(sys.argv[1])
-          output = Path(sys.argv[2])
-          with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=6) as archive:
-              for path in project.rglob("*"):
-                  if not path.is_file():
-                      continue
-                  relative = path.relative_to(project)
-                  if ".godot" in relative.parts or "build" in relative.parts:
-                      continue
-                  archive.write(path, Path(project.name) / relative)
-          print(f"Packaged matching source: {output.stat().st_size} bytes")
-          PY
-
-      - name: Publish Android APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.3-Android
-          path: source/Flatworld_Creative_Godot/build/Flatworld-Creative-0.6.3.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish patched source project
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.3-Source
-          path: Flatworld-Creative-0.6.3-Source.zip
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish Compatibility-rendered screenshot and logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.3-Visual-Smoke
-          path: visual-artifacts/*
-          if-no-files-found: error
-          retention-days: 14
-, 'version/name="0.6.4"', preset, count=1, flags=re.MULTILINE)
-          if n != 1:
-              raise SystemExit("Android version-name field not found")
-          preset_path.write_text(preset)
-
-          # The global horizontal corruption is the confirmed Godot Android Mobile/Vulkan driver issue;
-          # the Compatibility/OpenGL ES renderer is already configured in the preceding step. The
-          # remaining black streaks in the test capture are shadow-map artefacts, so disable shadow
-          # maps completely. This is closer to Minecraft mobile Fast Graphics and saves GPU work.
-          main_path = project / "scripts/main.gd"
-          main = main_path.read_text()
-          shadow_line = '    sun.shadow_enabled = not OS.has_feature("mobile")'
-          if main.count(shadow_line) != 1:
-              raise SystemExit(f"Expected one directional-shadow setting, found {main.count(shadow_line)}")
-          main = main.replace(shadow_line, "    sun.shadow_enabled = false", 1)
-
-          # Sky/light Environment and ProceduralSkyMaterial were being rewritten every frame.
-          # The in-world clock remains frame-accurate; material updates are capped at 10 Hz.
-          day_member = "var _day_time := 0.0"
-          if day_member not in main:
-              raise SystemExit("Day clock member not found")
-          if "var _daylight_update_accumulator := 0.0" not in main:
-              main = main.replace(day_member, day_member + "\nvar _daylight_update_accumulator := 0.0", 1)
-          old_day_block = "    _day_time = fposmod(_day_time + delta * 20.0, 24000.0)\n    _update_daylight()"
-          new_day_block = """    _day_time = fposmod(_day_time + delta * 20.0, 24000.0)
-              _daylight_update_accumulator += delta
-              if _daylight_update_accumulator >= 0.1:
-                  _daylight_update_accumulator = 0.0
-                  _update_daylight()"""
-          if old_day_block in main:
-              main = main.replace(old_day_block, new_day_block, 1)
-          elif "_daylight_update_accumulator >= 0.1" not in main:
-              raise SystemExit("Per-frame daylight refresh anchor not found")
-
-          # Avoid touching the SprintButton/style resources on every rendered frame.
-          sprint_member = "var _daylight_update_accumulator := 0.0"
-          if "var _last_hud_sprint_state :=" not in main:
-              if main.count(sprint_member) != 1:
-                  raise SystemExit("HUD sprint-state member insertion point missing")
-              main = main.replace(sprint_member, sprint_member + "\nvar _last_hud_sprint_state := false", 1)
-          sprint_block = """    if is_instance_valid(player) and is_instance_valid(hud):
-                  hud.set_sprint_text(player.sprint_toggled)"""
-          sprint_replacement = """    if is_instance_valid(player) and is_instance_valid(hud) and player.sprint_toggled != _last_hud_sprint_state:
-                  _last_hud_sprint_state = player.sprint_toggled
-                  hud.set_sprint_text(player.sprint_toggled)"""
-          if sprint_block in main:
-              main = main.replace(sprint_block, sprint_replacement, 1)
-          elif "player.sprint_toggled != _last_hud_sprint_state" not in main:
-              raise SystemExit("Per-frame sprint UI refresh anchor not found")
-          main_path.write_text(main)
-
-          # The atlas leaf tiles intentionally use transparent edge pixels for Fast/Fancy-style cutouts.
-          # At this game's block-scale, those masks render as long sky-coloured horizontal dashes. Fill
-          # the transparent edge pixels with the nearest leaf colour and make only leaf block tiles
-          # opaque, matching Minecraft Fast Graphics while preserving all other texture alpha.
-          atlas_path = project / "assets/textures/atlas.png"
-          atlas_map_path = project / "assets/textures/atlas_map.json"
-          blocks_path = project / "assets/data/blocks.json"
-          atlas = Image.open(atlas_path).convert("RGBA")
-          atlas_map = json.loads(atlas_map_path.read_text())
-          block_rows = json.loads(blocks_path.read_text())["blocks"]
-          tile_size = int(atlas_map.get("tile_size", 16))
-          columns = int(atlas_map.get("columns", atlas.width // tile_size))
-          leaf_tiles = set()
-          for block_id, row in block_rows.items():
-              if "leaves" not in block_id:
-                  continue
-              tiles = row.get("tiles", {})
-              if not isinstance(tiles, dict):
-                  continue
-              for tile in tiles.values():
-                  if isinstance(tile, int) and tile >= 0:
-                      leaf_tiles.add(tile)
-                  elif isinstance(tile, dict) and isinstance(tile.get("tile"), int):
-                      leaf_tiles.add(int(tile["tile"]))
-
-          if len(leaf_tiles) < 6:
-              raise SystemExit(f"Too few leaf atlas tiles located: {len(leaf_tiles)}")
-          pixels = atlas.load()
-          filled_pixels = 0
-          for tile_index in sorted(leaf_tiles):
-              tx = (tile_index % columns) * tile_size
-              ty = (tile_index // columns) * tile_size
-              tile = atlas.crop((tx, ty, tx + tile_size, ty + tile_size)).convert("RGBA")
-              tp = tile.load()
-              opaque = [(x, y, tp[x, y][:3]) for y in range(tile_size) for x in range(tile_size) if tp[x, y][3] >= 128]
-              if not opaque:
-                  raise SystemExit(f"Leaf tile has no opaque colour samples: {tile_index}")
-              for y in range(tile_size):
-                  for x in range(tile_size):
-                      r, g, b, a = tp[x, y]
-                      if a < 255:
-                          if a == 0:
-                              _, _, rgb = min(opaque, key=lambda q: (q[0]-x)*(q[0]-x) + (q[1]-y)*(q[1]-y))
-                              r, g, b = rgb
-                          tp[x, y] = (r, g, b, 255)
-                          filled_pixels += 1
-              atlas.paste(tile, (tx, ty))
-          atlas.save(atlas_path)
-          print(f"Filled {filled_pixels} transparent pixels in {len(leaf_tiles)} leaf tiles to prevent sky-coloured dash gaps.")
-
-          # Optimise mesh rebuild allocations. Block texture dictionaries only change at the top level
-          # for redstone/portal states, so deep-copying every tile map for every visible voxel is wasteful.
-          world_path = project / "scripts/world.gd"
-          world = world_path.read_text()
-          mesh_start = world.find("func _rebuild_chunk_mesh(chunk_coord: Vector2i) -> void:")
-          mesh_end = world.find("\nfunc _fluid_surface_height", mesh_start)
-          if mesh_start < 0 or mesh_end < 0:
-              raise SystemExit("Chunk-mesh function boundaries missing")
-          mesh_func = world[mesh_start:mesh_end]
-          old_tiles = 'var tiles: Dictionary = definition.get("tiles", {}).duplicate(true)'
-          if old_tiles not in mesh_func:
-              if 'var tiles: Dictionary = definition.get("tiles", {}).duplicate()' not in mesh_func:
-                  raise SystemExit("Deep tile-copy hot path not found")
-          else:
-              mesh_func = mesh_func.replace(old_tiles, 'var tiles: Dictionary = definition.get("tiles", {}).duplicate()', 1)
-          mesh_func = mesh_func.replace("var definition := BlockRegistry.get_block(block_id)", "var definition := _cached_render_definition(block_id)", 1)
-          mesh_func = mesh_func.replace("var neighbour_def := BlockRegistry.get_block(neighbour_id) if neighbour_id != \"air\" else {}", "var neighbour_def := _cached_render_definition(neighbour_id) if neighbour_id != \"air\" else {}", 1)
-          world = world[:mesh_start] + mesh_func + world[mesh_end:]
-          world_path.write_text(world)
-
-          print("Applied shadow-map disable, 10 Hz daylight updates, idempotent sprint HUD updates, shallow tile copies, and opaque leaf tiles.")
-          PY
       - name: Prevent vegetation-obstructed spawn and assert visible world
         shell: bash
         run: |
@@ -2594,6 +1945,7 @@ jobs:
           main_path.write_text(main)
           print("Added terrain+vegetation clearance and a bright new-world starting time.")
           PY
+
       - name: Import, smoke-test Compatibility renderer, and export Android APK
         shell: bash
         run: |
@@ -2633,6 +1985,24 @@ jobs:
           test -s "$RUNNER_TEMP/visual/compatibility-smoke.avi"
           ffmpeg -y -loglevel error -ss 3 -i "$RUNNER_TEMP/visual/compatibility-smoke.avi" -frames:v 1 "$RUNNER_TEMP/visual/compatibility-smoke.png"
           test -s "$RUNNER_TEMP/visual/compatibility-smoke.png"
+          python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" "$RUNNER_TEMP/godot-visual.log" <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          import re, statistics, sys
+          image_path, log_path = map(Path, sys.argv[1:])
+          image = Image.open(image_path).convert("RGB")
+          # This standard camera region is clear sky, not terrain or UI. Dark pixels here
+          # indicate screen-wide dash/flicker contamination like the supplied screenshots.
+          sky = image.crop((1030, 100, 1140, 350))
+          dark = sum(1 for rgb in sky.getdata() if max(rgb) < 60)
+          if dark > 4:
+              raise SystemExit(f"Visual regression: {dark} dark pixels in clear-sky region (limit 4)")
+          log = log_path.read_text(errors="replace")
+          timings = [int(x) for x in re.findall(r"CHUNK_LOAD_MS:.*?(\d+)\s*$", log, re.MULTILINE)]
+          if not timings:
+              raise SystemExit("No chunk-load timings found in graphical smoke run")
+          print(f"Visual regression passed: dark_sky_pixels={dark}; chunk_load_median_ms={statistics.median(timings):.1f}; samples={timings}")
+          PY
           python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" <<'PY'
           from PIL import Image, ImageStat
           import sys
@@ -2660,14 +2030,14 @@ jobs:
           cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
           echo "Headless startup and graphical Compatibility smoke tests passed."
           mkdir -p "$PROJECT_DIR/build"
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.4.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
           if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-export.log"; then
             echo "GDScript errors found during export; refusing to publish a broken APK."
             exit 1
           fi
-          test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk"
-          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk"
-          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.3-Source.zip" <<'PY'
+          test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.4.apk"
+          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.4.apk"
+          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.4-Source.zip" <<'PY'
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
           import sys
@@ -2687,23 +2057,23 @@ jobs:
       - name: Publish Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.3-Android
-          path: source/Flatworld_Creative_Godot/build/Flatworld-Creative-0.6.3.apk
+          name: Flatworld-Creative-0.6.4-Android
+          path: source/Flatworld_Creative_Godot/build/Flatworld-Creative-0.6.4.apk
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish patched source project
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.3-Source
-          path: Flatworld-Creative-0.6.3-Source.zip
+          name: Flatworld-Creative-0.6.4-Source
+          path: Flatworld-Creative-0.6.4-Source.zip
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish Compatibility-rendered screenshot and logs
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.3-Visual-Smoke
+          name: Flatworld-Creative-0.6.4-Visual-Smoke
           path: visual-artifacts/*
           if-no-files-found: error
           retention-days: 14
