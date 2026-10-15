@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc36e64bf3d060d3e1d87ffe7fad.dl.dropboxusercontent.com/cd/0/get/DKFAqWvJphO7fkskgpbn8b-cXaoFZZ1PydvYRII4gZ4Jrdd4dHtrSPgf5KYyUzj45eRX52BlLn3tADNETz6vmcfW0L1bHrM8vGz-Ay4NzvyoonLReOeeC1ATly-9rzZostRDExwcymauxujGPxKw0aoMYRmjmwHjI4g6kTgI3hhL4g/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://ucb56bb61bc4c64d230c51ce6a2d.dl.dropboxusercontent.com/cd/0/get/DKHCX6ouNdBD8TyOYqgUZEG3LlxQBxSxRx7r9Io0aHguTJa4uevIg02EUhKv2eBvZQX0BqmXajmZsCAw4D1zB9iqJ72D2w4DplalwdLl7Ufe320Ejm0Coy1VfZIxrTrM4HeMARHN_sYftZiBm3elvha-qspIZx_hffv4Wk-HuFwHZQ/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -97,6 +97,7 @@ jobs:
               '        var affected := coord + offset': '        var affected: Vector2i = coord + offset',
               '            var face_shade := [0.82, 0.82, 1.0, 0.58, 0.74, 0.74][face_index]': '            var face_shade: float = [0.82, 0.82, 1.0, 0.58, 0.74, 0.74][face_index]',
               '                var face_shade := [0.82, 0.82, 1.0, 0.58, 0.74, 0.74][face_index]': '                var face_shade: float = [0.82, 0.82, 1.0, 0.58, 0.74, 0.74][face_index]',
+              '    var other_axes: Array[int] = [1, 2] if axis == 0 else ([0, 2] if axis == 1 else [0, 1])': '    var other_axes: Array = [1, 2] if axis == 0 else ([0, 2] if axis == 1 else [0, 1])',
           }
           lines = [replacements.get(line, line) for line in lines]
           # Keep only the spawn chunk synchronous at startup. Adjacent chunks stream in afterward.
