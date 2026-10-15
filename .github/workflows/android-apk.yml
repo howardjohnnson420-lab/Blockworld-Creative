@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://ucdb75a2d48f3ac2fe4bfec62315.dl.dropboxusercontent.com/cd/0/get/DKHvm0wD47chiZtPGJm5zx_VeVA-0Wsop0pM38LwUSEiIJfbJUV84pe5ibN-BnclOejtN9iG1UfCKLWT5Ga-a4qbIZLOc7iqo30xDx7Yx7dw5IMy0RkoAlEsMDN4XaGkZYsUNJzFt66j-lSNlSQ2qtQoCvuEg8Nkk8wEbwWqm-YTYw/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uc1bbb886b300149e8a34a1f907e.dl.dropboxusercontent.com/cd/0/get/DKHSUXsTc8QRIs_7CjK_gVd9XNc7m8PP19CB3AkP9lFgLSa71ys5NF1rnh56yz1-8RQdIiKjtsqOO_OAQFVVfXhWHFHpW1q6GLwThUexRIA2YDPEMZaZ0g513F3r8YvXMAaQU_C78I6wjGas8mNEw4q6-IRRelBr-TfG3EH7c8xU9g/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1101,7 +1101,7 @@ jobs:
           source = source.replace("const BLOCK_LIGHT_SCAN_INTERVAL := 0.75", "const BLOCK_LIGHT_SCAN_INTERVAL := 1.5", 1)
 
           path.write_text(source)
-          (project / "VERSION.txt").write_text("0.5.9\n")
+          (project / "VERSION.txt").write_text("0.6.5\n")
           print(f"Fixed {changed} quad index sites and optimized repeated base-block/light-source work.")
           PY
       - name: Switch Android to OpenGL Compatibility and tune mobile rendering
@@ -1111,410 +1111,19 @@ jobs:
           python3 - "$PROJECT_DIR" <<'PY'
           from pathlib import Path
           import re, sys
-
           project = Path(sys.argv[1])
           settings_path = project / "project.godot"
           settings = settings_path.read_text()
-
-          # Godot issue #115217 and duplicate #123370 report these same screen-wide
-          # horizontal pixel lines on Android Vulkan Mobile, including 4.7.2.
-          # Use OpenGL ES Compatibility on Android to avoid that Vulkan render path.
           for key in ("renderer/rendering_method", "renderer/rendering_method.mobile"):
               pattern = re.compile(r"(?m)^" + re.escape(key) + r"\s*=.*$")
               line = key + '="gl_compatibility"'
               if pattern.search(settings):
                   settings = pattern.sub(line, settings, count=1)
               else:
-                  section = "[rendering]"
-                  if section not in settings:
-                      settings += "\n[rendering]\n"
-                  settings = settings.replace(section + "\n", section + "\n" + line + "\n", 1)
-          settings_path.write_text(settings)
-          (project / "VERSION.txt").write_text("0.6.5\n")
-
-          # Fix an actual CPU hot path: get(key, _terrain_height_at(...)) eagerly
-          # computes the terrain even when the surface-height dictionary has the key.
-          world_path = project / "scripts/world.gd"
-          world = world_path.read_text()
-          old = "    var terrain_height := int(surface_heights.get(Vector2i(cell.x, cell.z), _terrain_height_at(cell.x, cell.z)))"
-          new = """    var terrain_column := Vector2i(cell.x, cell.z)
-              var terrain_height: int
-              if surface_heights.has(terrain_column):
-                  terrain_height = int(surface_heights[terrain_column])
-              else:
-                  terrain_height = _terrain_height_at(cell.x, cell.z)"""
-          if world.count(old) == 1:
-              world = world.replace(old, new, 1)
-          old = "    var surface := int(surface_heights.get(column, _terrain_height_at(x, z)))"
-          new = """    var surface: int
-              if surface_heights.has(column):
-                  surface = int(surface_heights[column])
-              else:
-                  surface = _terrain_height_at(x, z)"""
-          if world.count(old) == 1:
-              world = world.replace(old, new, 1)
-          world_path.write_text(world)
-
-          # Lightweight Minecraft-style HUD refinement: use symbols for the two primary
-          # actions, soften the glass-like button fill, and center the health/hunger row
-          # above the hotbar. All existing touch signals/feature callbacks are preserved.
-          hud_path = project / "scripts/mobile_hud.gd"
-          hud = hud_path.read_text()
-          hud = hud.replace('_make_button("HIT", "BreakButton"', '_make_button("⛏", "BreakButton"', 1)
-          hud = hud.replace('_make_button("USE", "PlaceButton"', '_make_button("▣", "PlaceButton"', 1)
-          hud = hud.replace("Color(0.075, 0.09, 0.11, 0.55)", "Color(0.055, 0.065, 0.078, 0.38)", 1)
-          hud = hud.replace("Color(0.84, 0.88, 0.9, 0.50)", "Color(0.86, 0.89, 0.92, 0.36)", 1)
-
-          old_health = """health_label.anchor_left = 1.0
-              health_label.anchor_right = 1.0
-              health_label.anchor_top = 0.0
-              health_label.anchor_bottom = 0.0
-              health_label.offset_left = -290.0
-              health_label.offset_right = -122.0
-              health_label.offset_top = 34.0
-              health_label.offset_bottom = 57.0
-              health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT"""
-          new_health = """health_label.anchor_left = 0.5
-              health_label.anchor_right = 0.5
-              health_label.anchor_top = 1.0
-              health_label.anchor_bottom = 1.0
-              health_label.offset_left = -175.0
-              health_label.offset_right = 175.0
-              health_label.offset_top = -88.0
-              health_label.offset_bottom = -62.0
-              health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER"""
-          if old_health in hud:
-              hud = hud.replace(old_health, new_health, 1)
-          old_layout = """health_label.offset_left = -290.0 * scale
-                  health_label.offset_right = -122.0 * scale
-                  health_label.offset_top = 33.0 * scale
-                  health_label.offset_bottom = 56.0 * scale"""
-          new_layout = """health_label.anchor_left = 0.5
-                  health_label.anchor_right = 0.5
-                  health_label.anchor_top = 1.0
-                  health_label.anchor_bottom = 1.0
-                  health_label.offset_left = -175.0 * scale
-                  health_label.offset_right = 175.0 * scale
-                  health_label.offset_top = -88.0 * scale
-                  health_label.offset_bottom = -62.0 * scale
-                  health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER"""
-          if old_layout in hud:
-              hud = hud.replace(old_layout, new_layout, 1)
-          hud_path.write_text(hud)
-
-          final_settings = settings_path.read_text()
-          if 'renderer/rendering_method="gl_compatibility"' not in final_settings:
-              raise SystemExit("Primary Compatibility renderer setting missing")
-          if 'renderer/rendering_method.mobile="gl_compatibility"' not in final_settings:
-              raise SystemExit("Mobile Compatibility renderer setting missing")
-          print("Renderer set to GL Compatibility; eager height defaults fixed; HUD actions styled.")
-          PY
-      - name: Fix chunk seams, leaf cutout striping, and mobile CPU spikes
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - "$PROJECT_DIR" <<'PY'
-          from pathlib import Path
-          import json, random, re, subprocess, sys
-
-          project = Path(sys.argv[1])
-          world_path = project / "scripts/world.gd"
-          world = world_path.read_text()
-
-          # Neighbours beyond the loaded block dictionary must be resolved from the
-          # deterministic base world inside the stream radius; treating them as air
-          # made chunk edges emit duplicate coplanar faces (z-fighting/stretched streaks).
-          helper_anchor = "func _base_cell_has_visible_face(cell: Vector3i, block_id: String) -> bool:"
-          helper = """func _mesh_neighbour_block_id(cell: Vector3i) -> String:
-              if cell.y < MIN_WORLD_Y or cell.y > MAX_WORLD_Y:
-                  return "air"
-              var key := _cell_key(cell)
-              if modifications.has(key):
-                  return str(modifications[key])
-              if blocks.has(cell):
-                  return str(blocks[cell])
-              var coord := _chunk_for_cell(cell)
-              if chunk_nodes.has(coord) or _within_radius(coord, streaming_center, _active_load_radius()):
-                  return _base_block_at(cell)
-              return "air"
-
-          """
-          if "func _mesh_neighbour_block_id(cell: Vector3i) -> String:" not in world:
-              if world.count(helper_anchor) != 1:
-                  raise SystemExit("Mesh-neighbour helper insertion point missing")
-              world = world.replace(helper_anchor, helper + helper_anchor, 1)
-
-          # Cache block metadata used repeatedly during generation.
-          if "var _render_block_definition_cache: Dictionary = {}" not in world:
-              anchor = "var _generation_base_cache_active := false"
-              if world.count(anchor) != 1:
-                  raise SystemExit("Render definition cache field marker missing")
-              world = world.replace(anchor, anchor + "\nvar _render_block_definition_cache: Dictionary = {}", 1)
-          if "func _cached_render_definition(block_id: String) -> Dictionary:" not in world:
-              cached = """func _cached_render_definition(block_id: String) -> Dictionary:
-              if not _render_block_definition_cache.has(block_id):
-                  _render_block_definition_cache[block_id] = BlockRegistry.get_block(block_id)
-              return _render_block_definition_cache[block_id]
-
-          """
-              if world.count(helper_anchor) != 1:
-                  raise SystemExit("Cached render-definition helper marker missing")
-              world = world.replace(helper_anchor, cached + helper_anchor, 1)
-          visible_start = world.find(helper_anchor)
-          visible_end = world.find("\nfunc _write_generated_block", visible_start)
-          if visible_start < 0 or visible_end < 0:
-              raise SystemExit("Visible-face function boundaries missing")
-          visible = world[visible_start:visible_end]
-          visible = visible.replace("var definition := BlockRegistry.get_block(block_id)", "var definition := _cached_render_definition(block_id)", 1)
-          visible = visible.replace("var neighbour_def := BlockRegistry.get_block(neighbour_id)", "var neighbour_def := _cached_render_definition(neighbour_id)", 1)
-          local_dirs = "    var directions: Array[Vector3i] = [Vector3i.RIGHT, Vector3i.LEFT, Vector3i.UP, Vector3i.DOWN, Vector3i.BACK, Vector3i.FORWARD]\n"
-          visible = visible.replace(local_dirs, "", 1).replace("for direction in directions:", "for direction in DIRECTIONS:", 1)
-          world = world[:visible_start] + visible + world[visible_end:]
-
-          # Put each chunk node at its integer origin and store its mesh vertices relative
-          # to that origin. This retains precision after long travel into large coordinates.
-          chunk_root_line = '    chunk_root.name = "Chunk_%d_%d" % [coord.x, coord.y]'
-          if chunk_root_line not in world:
-              raise SystemExit("Chunk-root origin insertion marker missing")
-          if "chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE)" not in world:
-              world = world.replace(chunk_root_line, chunk_root_line + '\n    chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE), 0.0, float(coord.y * CHUNK_SIZE))', 1)
-
-          mesh_start = world.find("func _rebuild_chunk_mesh(chunk_coord: Vector2i) -> void:")
-          mesh_end = world.find("\nfunc _fluid_surface_height", mesh_start)
-          if mesh_start < 0 or mesh_end < 0:
-              raise SystemExit("Chunk mesh function boundaries missing")
-          mesh = world[mesh_start:mesh_end]
-          cube_neighbour = "var neighbour_id := get_block_id(neighbour)"
-          if cube_neighbour in mesh:
-              mesh = mesh.replace(cube_neighbour, "var neighbour_id := _mesh_neighbour_block_id(neighbour)", 1)
-          elif "var neighbour_id := _mesh_neighbour_block_id(neighbour)" not in mesh:
-              raise SystemExit("Cube face neighbour lookup missing")
-          if "var chunk_mesh_origin := Vector3(" not in mesh:
-              marker = "    if not was_generation_cache_active:"
-              if mesh.count(marker) != 1:
-                  raise SystemExit("Chunk-local vertex conversion marker missing")
-              convert = (
-                  "    var chunk_mesh_origin := Vector3(float(chunk_coord.x * CHUNK_SIZE), 0.0, float(chunk_coord.y * CHUNK_SIZE))\n"
-                  "    for vertex_index in range(vertices.size()):\n"
-                  "        vertices[vertex_index] = vertices[vertex_index] - chunk_mesh_origin\n"
-                  "    for collision_index in range(collision_faces.size()):\n"
-                  "        collision_faces[collision_index] = collision_faces[collision_index] - chunk_mesh_origin\n"
-              )
-              mesh = mesh.replace(marker, convert + marker, 1)
-          world = world[:mesh_start] + mesh + world[mesh_end:]
-
-          # Apply the same deterministic neighbour query to shaped blocks and fences.
-          shape_start = world.find("func _append_shaped_block_geometry(")
-          shape_end = world.find("\nfunc _fence_connects_to", shape_start)
-          if shape_start < 0 or shape_end < 0:
-              raise SystemExit("Shaped-block function boundaries missing")
-          shaped = world[shape_start:shape_end]
-          shaped = shaped.replace("neighbour_id = get_block_id(cell + DIRECTIONS[face_index])", "neighbour_id = _mesh_neighbour_block_id(cell + DIRECTIONS[face_index])", 1)
-          shaped = shaped.replace("var neighbour_id := get_block_id(cell + DIRECTIONS[face_index])", "var neighbour_id := _mesh_neighbour_block_id(cell + DIRECTIONS[face_index])", 1)
-          world = world[:shape_start] + shaped + world[shape_end:]
-          fence_start = world.find("func _fence_connects_to(cell: Vector3i, direction: Vector3i) -> bool:")
-          fence_end = world.find("\nfunc _box_face_is_internal", fence_start)
-          if fence_start >= 0 and fence_end > fence_start:
-              fence = world[fence_start:fence_end].replace("var neighbour_id := get_block_id(neighbour_cell)", "var neighbour_id := _mesh_neighbour_block_id(neighbour_cell)", 1)
-              world = world[:fence_start] + fence + world[fence_end:]
-
-          # Build a neighbour remesh queue. Loading one chunk no longer synchronously
-          # rebuilds up to five expensive meshes in a single frame.
-          if "var _stream_dirty_mesh_chunks: Dictionary = {}" not in world:
-              anchor = "var _generation_base_cache_active := false"
-              world = world.replace(anchor, anchor + "\nvar _stream_dirty_mesh_chunks: Dictionary = {}", 1)
-          process_start = world.find("func _process(delta: float) -> void:")
-          process_end = world.find("\nfunc generate_world", process_start)
-          if process_start < 0 or process_end < 0:
-              raise SystemExit("World process function boundaries missing")
-          process = world[process_start:process_end]
-          old_stream = "            _load_chunk(coord)\n            _refresh_chunk_and_neighbours(coord)\n            generated_this_frame += 1"
-          new_stream = (
-              "            _load_chunk(coord)\n"
-              "            _rebuild_chunk_mesh(coord)\n"
-              "            for offset in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:\n"
-              "                var dirty_coord: Vector2i = coord + offset\n"
-              "                if chunk_nodes.has(dirty_coord):\n"
-              "                    _stream_dirty_mesh_chunks[dirty_coord] = true\n"
-              "            generated_this_frame += 1"
-          )
-          if old_stream in process:
-              process = process.replace(old_stream, new_stream, 1)
-          elif "_stream_dirty_mesh_chunks[dirty_coord] = true" not in process:
-              raise SystemExit("Chunk-stream rebuild block missing")
-          if "_stream_dirty_mesh_chunks.erase(dirty_chunk)" not in process:
-              process = process.rstrip() + (
-                  "\n\n    if not _stream_dirty_mesh_chunks.is_empty():\n"
-                  "        var dirty_keys := _stream_dirty_mesh_chunks.keys()\n"
-                  "        var dirty_chunk: Vector2i = dirty_keys[0]\n"
-                  "        _stream_dirty_mesh_chunks.erase(dirty_chunk)\n"
-                  "        if chunk_nodes.has(dirty_chunk):\n"
-                  "            _rebuild_chunk_mesh(dirty_chunk)\n"
-              )
-          world = world[:process_start] + process + world[process_end:]
-
-          # Tick transient block state at 10 Hz instead of deep-copying it at display FPS.
-          if "var _transient_tick_accumulator := 0.0" not in world:
-              anchor = "var _block_light_scan_accumulator := 0.0"
-              if world.count(anchor) != 1:
-                  raise SystemExit("Transient tick accumulator field marker missing")
-              world = world.replace(anchor, anchor + "\nvar _transient_tick_accumulator := 0.0", 1)
-          if "_tick_transient_states(delta)" in world:
-              world = world.replace(
-                  "    _tick_transient_states(delta)",
-                  "    _transient_tick_accumulator += delta\n"
-                  "    if _transient_tick_accumulator >= 0.1:\n"
-                  "        var transient_delta := _transient_tick_accumulator\n"
-                  "        _transient_tick_accumulator = 0.0\n"
-                  "        _tick_transient_states(transient_delta)",
-                  1,
-              )
-
-          # Keep the noisy biome query off the many underground voxel lookups.
-          base_start = world.find("func _base_block_at_uncached(cell: Vector3i) -> String:")
-          base_end = world.find("\nfunc _nether_block_at", base_start)
-          if base_start < 0:
-              raise SystemExit("Base-world function missing")
-          if base_end < 0:
-              base_end = world.find("\nfunc ", base_start + 1)
-          base_fn = world[base_start:base_end]
-          old_biome = "    var biome := get_biome_at(cell.x, cell.z)\n    if cell.y > terrain_height:"
-          if old_biome in base_fn:
-              base_fn = base_fn.replace(old_biome, "    if cell.y > terrain_height:", 1)
-              surface_marker = "    if cell.y < terrain_height - 1:"
-              if surface_marker not in base_fn:
-                  raise SystemExit("Biome query relocation point missing")
-              base_fn = base_fn.replace(surface_marker, "    var biome := get_biome_at(cell.x, cell.z)\n" + surface_marker, 1)
-              world = world[:base_start] + base_fn + world[base_end:]
-
-          cave_calls = [
-              ("if _is_cave_cell(cell):", "if _is_cave_cell(cell, terrain_height):"),
-              ("if cell.y < floor_height - 4 and _is_cave_cell(cell):", "if cell.y < floor_height - 4 and _is_cave_cell(cell, floor_height):"),
-              ("if cell.y < surface - 4 and _is_cave_cell(cell):", "if cell.y < surface - 4 and _is_cave_cell(cell, surface):"),
-              ("func _is_cave_cell(cell: Vector3i) -> bool:", "func _is_cave_cell(cell: Vector3i, terrain_height: int) -> bool:"),
-              ("if cell.y < MIN_WORLD_Y + 6 or cell.y > _terrain_height_at(cell.x, cell.z) - 5:", "if cell.y < MIN_WORLD_Y + 6 or cell.y > terrain_height - 5:"),
-          ]
-          for old, new in cave_calls:
-              if old in world:
-                  world = world.replace(old, new, 1)
-          if "func _is_cave_cell(cell: Vector3i, terrain_height: int) -> bool:" not in world:
-              raise SystemExit("Height-parameterized cave test missing")
-
-          world_path.write_text(world)
-
-          # Repair the atlas leaf cutout masks. The original alpha-zero pixels clustered
-          # in the top/bottom texel rows, so repeating them per voxel created horizontal
-          # transparent streaks across canopies. Keep the alpha count but scatter holes
-          # into the interior and leave every tile edge opaque.
-          from PIL import Image
-          atlas_path = project / "assets/textures/atlas.png"
-          atlas_map_path = project / "assets/textures/atlas_map.json"
-          atlas = Image.open(atlas_path).convert("RGBA")
-          atlas_map = json.loads(atlas_map_path.read_text())
-          leaf_ids = [block_id for block_id in atlas_map["tiles"] if "leaves" in block_id]
-          if not leaf_ids:
-              raise SystemExit("No leaves tile entries in atlas map")
-          moved = 0
-          for block_id in leaf_ids:
-              for face, slot in atlas_map["tiles"][block_id].items():
-                  x0, y0 = int(slot["x"]), int(slot["y"])
-                  tile = atlas.crop((x0, y0, x0 + 16, y0 + 16))
-                  data = list(tile.getdata())
-                  holes = sum(1 for pixel in data if pixel[3] == 0)
-                  if holes == 0:
-                      continue
-                  seed = sum((i + 1) * ord(ch) for i, ch in enumerate(block_id + "/" + face))
-                  candidates = [(x, y) for y in range(1, 15) for x in range(1, 15)]
-                  random.Random(seed).shuffle(candidates)
-                  selected = []
-                  for x, y in candidates:
-                      if all(abs(x - ax) + abs(y - ay) > 1 for ax, ay in selected):
-                          selected.append((x, y))
-                          if len(selected) == holes:
-                              break
-                  if len(selected) != holes:
-                      raise SystemExit(f"Could not distribute leaf holes for {block_id}/{face}")
-                  for i, pixel in enumerate(data):
-                      if pixel[3] == 0:
-                          data[i] = (pixel[0], pixel[1], pixel[2], 255)
-                  for x, y in selected:
-                      i = y * 16 + x
-                      data[i] = (data[i][0], data[i][1], data[i][2], 0)
-                  tile.putdata(data)
-                  atlas.paste(tile, (x0, y0))
-                  moved += holes
-                  border = list(range(16)) + list(range(240, 256)) + [y * 16 for y in range(16)] + [y * 16 + 15 for y in range(16)]
-                  if any(tile.getpixel((i % 16, i // 16))[3] == 0 for i in border):
-                      raise SystemExit(f"Leaf edge still has transparent pixels: {block_id}/{face}")
-          atlas.save(atlas_path)
-          subprocess.run([sys.executable, str(project / "tools/rebuild_block_textures_from_atlas.py")], check=True, stdout=subprocess.PIPE, text=True)
-
-          # New worlds default to daytime for a useful visual test; saved worlds keep their time.
-          main_path = project / "scripts/main.gd"
-          main = main_path.read_text()
-          main = main.replace('saved.get("day_time", 1000.0)', 'saved.get("day_time", 6000.0)', 1)
-          main_path.write_text(main)
-
-          # Improve mobile controls with labeled tap targets and a Bedrock-like button
-          # surface; the sprint setter no longer rebuilds theme resources every frame.
-          hud_path = project / "scripts/mobile_hud.gd"
-          hud = hud_path.read_text()
-          hud = hud.replace('_make_button("⛏", "BreakButton"', '_make_button("BREAK", "BreakButton"', 1)
-          hud = hud.replace('_make_button("HIT", "BreakButton"', '_make_button("BREAK", "BreakButton"', 1)
-          hud = hud.replace('_make_button("▣", "PlaceButton"', '_make_button("PLACE", "PlaceButton"', 1)
-          hud = hud.replace('_make_button("USE", "PlaceButton"', '_make_button("PLACE", "PlaceButton"', 1)
-          hud = hud.replace('_make_button("↑", "JumpButton"', '_make_button("JUMP", "JumpButton"', 1)
-          hud = hud.replace('_make_button("⌄", "DescendButton"', '_make_button("DOWN", "DescendButton"', 1)
-          hud = hud.replace('_make_button("»", "SprintButton"', '_make_button("RUN", "SprintButton"', 1)
-          hud = hud.replace("Color(0.055, 0.065, 0.078, 0.38)", "Color(0.28, 0.30, 0.30, 0.52)", 1)
-          hud = hud.replace("Color(0.86, 0.89, 0.92, 0.36)", "Color(0.03, 0.04, 0.04, 0.94)", 1)
-          if "normal.shadow_size = 2" not in hud:
-              anchor = "    normal.content_margin_bottom = 2.0"
-              if anchor in hud:
-                  hud = hud.replace(anchor, anchor + "\n    normal.shadow_color = Color(0.0, 0.0, 0.0, 0.55)\n    normal.shadow_size = 2\n    normal.shadow_offset = Vector2(0, 2)", 1)
-          if "var _sprint_style_enabled := false" not in hud:
-              state_anchor = "var _sprint_enabled := false"
-              if state_anchor not in hud:
-                  raise SystemExit("Sprint style variable marker missing")
-              hud = hud.replace(state_anchor, state_anchor + "\nvar _sprint_style_enabled := false", 1)
-
-          def replace_function(source, signature, body):
-              start = source.find(signature)
-              if start < 0:
-                  raise SystemExit("HUD function missing: " + signature)
-              end = source.find("\nfunc ", start + len(signature))
-              if end < 0:
-                  raise SystemExit("No next function boundary after: " + signature)
-              return source[:start] + body.rstrip() + "\n\n" + source[end + 1:]
-
-          sprint_body = """func set_sprint_text(enabled: bool) -> void:
-              _sprint_enabled = enabled
-              var sprint_btn := root.get_node_or_null("SprintButton") as Button
-              if sprint_btn == null or _sprint_style_enabled == enabled:
-                  return
-              _sprint_style_enabled = enabled
-              sprint_btn.text = "RUN ON" if enabled else "RUN"
-              sprint_btn.tooltip_text = "Toggle sprint"
-              sprint_btn.modulate = Color.WHITE
-              _apply_mobile_button_style(sprint_btn, enabled, true)
-          """
-          hud = replace_function(hud, "func set_sprint_text(enabled: bool) -> void:", sprint_body)
-          health_body = """func set_health(health: int, hunger: int) -> void:
-              if health_label == null:
-                  return
-              var hearts := ""
-              var food := ""
-              for i in range(10):
-                  hearts += "♥" if health - i * 2 >= 2 else "♡"
-                  food += "◆" if hunger - i * 2 >= 2 else "◇"
-              health_label.text = hearts + "   " + food
-          """
-          hud = replace_function(hud, "func set_health(health: int, hunger: int) -> void:", health_body)
-          hud_path.write_text(hud)
-
-          # Record the matching app version and Android versionCode.
-          project_settings = project / "project.godot"
-          settings = project_settings.read_text()
+                  header = "[rendering]\n"
+                  if header not in settings:
+                      raise SystemExit("No [rendering] section")
+                  settings = settings.replace(header, header + line + "\n", 1)
           settings = re.sub(r'(?m)^config/version=.*
         uses: actions/setup-java@v4
         with:
@@ -1537,6 +1146,58 @@ jobs:
           python -m pip install --disable-pip-version-check Pillow
           python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
 
+      - name: Repair leaf cutout rows in the atlas
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$PROJECT_DIR" <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import json, random, subprocess, sys
+
+          project = Path(sys.argv[1])
+          atlas_path = project / "assets/textures/atlas.png"
+          atlas_map = json.loads((project / "assets/textures/atlas_map.json").read_text())
+          atlas = Image.open(atlas_path).convert("RGBA")
+          leaf_ids = [block_id for block_id in atlas_map["tiles"] if "leaves" in block_id]
+          if not leaf_ids:
+              raise SystemExit("No leaf tiles were found")
+          moved = 0
+          for block_id in leaf_ids:
+              for face, slot in atlas_map["tiles"][block_id].items():
+                  x0, y0 = int(slot["x"]), int(slot["y"])
+                  tile = atlas.crop((x0, y0, x0 + 16, y0 + 16))
+                  data = list(tile.getdata())
+                  holes = sum(1 for pixel in data if pixel[3] == 0)
+                  if holes == 0:
+                      continue
+                  seed = sum((i + 1) * ord(ch) for i, ch in enumerate(block_id + "/" + face))
+                  candidates = [(x, y) for y in range(1, 15) for x in range(1, 15)]
+                  random.Random(seed).shuffle(candidates)
+                  chosen = []
+                  for x, y in candidates:
+                      if all(abs(x - ax) + abs(y - ay) > 1 for ax, ay in chosen):
+                          chosen.append((x, y))
+                          if len(chosen) == holes:
+                              break
+                  if len(chosen) != holes:
+                      raise SystemExit(f"Failed to scatter alpha cutouts for {block_id}/{face}")
+                  for i, pixel in enumerate(data):
+                      if pixel[3] == 0:
+                          data[i] = (pixel[0], pixel[1], pixel[2], 255)
+                  for x, y in chosen:
+                      i = y * 16 + x
+                      data[i] = (data[i][0], data[i][1], data[i][2], 0)
+                  tile.putdata(data)
+                  atlas.paste(tile, (x0, y0))
+                  moved += holes
+                  border = list(range(16)) + list(range(240, 256)) + [y * 16 for y in range(16)] + [y * 16 + 15 for y in range(16)]
+                  if any(tile.getpixel((i % 16, i // 16))[3] == 0 for i in border):
+                      raise SystemExit(f"Transparent border row/column remains: {block_id}/{face}")
+          atlas.save(atlas_path)
+          subprocess.run([sys.executable, str(project / "tools/rebuild_block_textures_from_atlas.py")], check=True, stdout=subprocess.PIPE, text=True)
+          print(f"Redistributed {moved} transparent leaf pixels into tile interiors; no clear horizontal border rows remain.")
+          PY
       - name: Download Godot 4.7.2 and matching Android export templates
         run: |
           set -euo pipefail
@@ -1592,7 +1253,6 @@ jobs:
             echo "Spawn surface invariant was not logged."
             exit 1
           fi
-          # Use a real window and software OpenGL to test a rendered frame, not only startup.
           mkdir -p "$RUNNER_TEMP/visual" "$GITHUB_WORKSPACE/visual-artifacts"
           if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
             sudo apt-get update -qq
@@ -1600,7 +1260,7 @@ jobs:
           fi
           timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 50 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
           if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Graphical Compatibility startup reported engine/script errors."
+            echo "Graphical Compatibility startup reported an engine/script error."
             exit 1
           fi
           if ! grep -Eqi "OpenGL API|OpenGL ES" "$RUNNER_TEMP/godot-visual.log"; then
@@ -1617,9 +1277,9 @@ jobs:
           mean = sum(stats.mean) / 3.0
           spread = sum(stats.stddev) / 3.0
           non_dark = sum(1 for r, g, b in image.getdata() if max(r, g, b) > 24) / (image.width * image.height)
-          print(f"Rendered frame stats: mean_rgb={mean:.1f}; spread={spread:.1f}; non_dark={non_dark:.1%}")
+          print(f"Frame stats: mean_rgb={mean:.1f}, spread={spread:.1f}, non_dark={non_dark:.1%}")
           if mean < 18 or spread < 8 or non_dark < 0.10:
-              raise SystemExit("Rendered game frame is blank/near-black; refusing to publish APK.")
+              raise SystemExit("Rendered frame is blank/near-black.")
           PY
           cp "$RUNNER_TEMP/visual/compatibility-smoke.png" "$GITHUB_WORKSPACE/visual-artifacts/compatibility-smoke.png"
           cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
@@ -1639,10 +1299,10 @@ jobs:
           project = Path(sys.argv[1])
           output = Path(sys.argv[2])
           with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=6) as archive:
-              for path in project.rglob("*"):
-                  if path.is_file() and ".godot" not in path.parts and "build" not in path.parts:
-                      archive.write(path, Path(project.name) / path.relative_to(project))
-          print(f"Matching source package created: {output.stat().st_size} bytes")
+              for file in project.rglob("*"):
+                  if file.is_file() and ".godot" not in file.parts and "build" not in file.parts:
+                      archive.write(file, Path(project.name) / file.relative_to(project))
+          print(f"Matching source ZIP size: {output.stat().st_size}")
           PY
 
       - name: Publish patched source project
@@ -1669,7 +1329,104 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 , 'config/version="0.6.5"', settings, count=1)
-          project_settings.write_text(settings)
+          settings_path.write_text(settings)
+          (project / "VERSION.txt").write_text("0.6.5\n")
+
+          # Avoid eager fallback execution in Dictionary.get: terrain-noise calls in the
+          # default expression ran even if the cached column height existed.
+          world_path = project / "scripts/world.gd"
+          world = world_path.read_text()
+          old = "    var terrain_height := int(surface_heights.get(Vector2i(cell.x, cell.z), _terrain_height_at(cell.x, cell.z)))"
+          new = """    var terrain_column := Vector2i(cell.x, cell.z)
+              var terrain_height: int
+              if surface_heights.has(terrain_column):
+                  terrain_height = int(surface_heights[terrain_column])
+              else:
+                  terrain_height = _terrain_height_at(cell.x, cell.z)"""
+          if world.count(old) == 1:
+              world = world.replace(old, new, 1)
+          old = "    var surface := int(surface_heights.get(column, _terrain_height_at(x, z)))"
+          new = """    var surface: int
+              if surface_heights.has(column):
+                  surface = int(surface_heights[column])
+              else:
+                  surface = _terrain_height_at(x, z)"""
+          if world.count(old) == 1:
+              world = world.replace(old, new, 1)
+          world_path.write_text(world)
+
+          # Update expensive Environment/sky properties at 10 Hz, not display FPS.
+          main_path = project / "scripts/main.gd"
+          main = main_path.read_text()
+          main = main.replace('saved.get("day_time", 1000.0)', 'saved.get("day_time", 6000.0)', 1)
+          process_start = main.find("func _process(delta: float) -> void:")
+          process_end = main.find("\nfunc ", process_start + 1) if process_start >= 0 else -1
+          if process_end > process_start and "var _mobile_daylight_accumulator: float = 0.0" not in main:
+              body = main[process_start:process_end]
+              if body.count("_update_daylight()") == 1:
+                  insert_at = main.find("\n")
+                  main = main[:insert_at + 1] + "var _mobile_daylight_accumulator: float = 0.0\n" + main[insert_at + 1:]
+                  process_start = main.find("func _process(delta: float) -> void:")
+                  process_end = main.find("\nfunc ", process_start + 1)
+                  body = main[process_start:process_end]
+                  body = body.replace("    _update_daylight()", "    _mobile_daylight_accumulator += delta\n    if _mobile_daylight_accumulator >= 0.1:\n        _mobile_daylight_accumulator = 0.0\n        _update_daylight()", 1)
+                  main = main[:process_start] + body + main[process_end:]
+          main_path.write_text(main)
+
+          # Make the primary mobile actions readable; their signals and actions stay unchanged.
+          hud_path = project / "scripts/mobile_hud.gd"
+          hud = hud_path.read_text()
+          for old, new in [
+              ('_make_button("HIT", "BreakButton"', '_make_button("BREAK", "BreakButton"'),
+              ('_make_button("⛏", "BreakButton"', '_make_button("BREAK", "BreakButton"'),
+              ('_make_button("USE", "PlaceButton"', '_make_button("PLACE", "PlaceButton"'),
+              ('_make_button("▣", "PlaceButton"', '_make_button("PLACE", "PlaceButton"'),
+              ('_make_button("↑", "JumpButton"', '_make_button("JUMP", "JumpButton"'),
+              ('_make_button("⌄", "DescendButton"', '_make_button("DOWN", "DescendButton"'),
+              ('_make_button("»", "SprintButton"', '_make_button("RUN", "SprintButton"'),
+          ]:
+              hud = hud.replace(old, new, 1)
+          hud = hud.replace("Color(0.055, 0.065, 0.078, 0.38)", "Color(0.28, 0.30, 0.30, 0.52)", 1)
+          hud = hud.replace("Color(0.86, 0.89, 0.92, 0.36)", "Color(0.03, 0.04, 0.04, 0.94)", 1)
+          if "normal.shadow_size = 2" not in hud:
+              margin = "    normal.content_margin_bottom = 2.0"
+              if margin in hud:
+                  hud = hud.replace(margin, margin + "\n    normal.shadow_color = Color(0.0, 0.0, 0.0, 0.55)\n    normal.shadow_size = 2\n    normal.shadow_offset = Vector2(0, 2)", 1)
+
+          def replace_function(source, signature, body):
+              start = source.find(signature)
+              if start < 0:
+                  raise SystemExit("Missing function: " + signature)
+              end = source.find("\nfunc ", start + len(signature))
+              if end < 0:
+                  raise SystemExit("Missing next function boundary")
+              return source[:start] + body.rstrip() + "\n\n" + source[end + 1:]
+
+          if "var _sprint_style_enabled := false" not in hud:
+              hud = hud.replace("var _sprint_enabled := false", "var _sprint_enabled := false\nvar _sprint_style_enabled := false", 1)
+          hud = replace_function(hud, "func set_sprint_text(enabled: bool) -> void:", """func set_sprint_text(enabled: bool) -> void:
+              _sprint_enabled = enabled
+              var sprint_btn := root.get_node_or_null("SprintButton") as Button
+              if sprint_btn == null or _sprint_style_enabled == enabled:
+                  return
+              _sprint_style_enabled = enabled
+              sprint_btn.text = "RUN ON" if enabled else "RUN"
+              sprint_btn.tooltip_text = "Toggle sprint"
+              sprint_btn.modulate = Color.WHITE
+              _apply_mobile_button_style(sprint_btn, enabled, true)
+          """)
+          hud = replace_function(hud, "func set_health(health: int, hunger: int) -> void:", """func set_health(health: int, hunger: int) -> void:
+              if health_label == null:
+                  return
+              var hearts := ""
+              var food := ""
+              for i in range(10):
+                  hearts += "♥" if health - i * 2 >= 2 else "♡"
+                  food += "◆" if hunger - i * 2 >= 2 else "◇"
+              health_label.text = hearts + "   " + food
+          """)
+          hud_path.write_text(hud)
+
           preset_path = project / "export_presets.cfg"
           preset = preset_path.read_text()
           preset = re.sub(r"(?m)^version/code=\d+$", "605", preset, count=1)
@@ -1750,37 +1507,6 @@ jobs:
             echo "Spawn surface invariant was not logged."
             exit 1
           fi
-          # Use a real window and software OpenGL to test a rendered frame, not only startup.
-          mkdir -p "$RUNNER_TEMP/visual" "$GITHUB_WORKSPACE/visual-artifacts"
-          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq xvfb ffmpeg
-          fi
-          timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 50 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Graphical Compatibility startup reported engine/script errors."
-            exit 1
-          fi
-          if ! grep -Eqi "OpenGL API|OpenGL ES" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Graphical smoke test did not initialize OpenGL/Compatibility."
-            exit 1
-          fi
-          test -s "$RUNNER_TEMP/visual/compatibility-smoke.avi"
-          ffmpeg -y -loglevel error -ss 3 -i "$RUNNER_TEMP/visual/compatibility-smoke.avi" -frames:v 1 "$RUNNER_TEMP/visual/compatibility-smoke.png"
-          python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" <<'PY'
-          from PIL import Image, ImageStat
-          import sys
-          image = Image.open(sys.argv[1]).convert("RGB")
-          stats = ImageStat.Stat(image)
-          mean = sum(stats.mean) / 3.0
-          spread = sum(stats.stddev) / 3.0
-          non_dark = sum(1 for r, g, b in image.getdata() if max(r, g, b) > 24) / (image.width * image.height)
-          print(f"Rendered frame stats: mean_rgb={mean:.1f}; spread={spread:.1f}; non_dark={non_dark:.1%}")
-          if mean < 18 or spread < 8 or non_dark < 0.10:
-              raise SystemExit("Rendered game frame is blank/near-black; refusing to publish APK.")
-          PY
-          cp "$RUNNER_TEMP/visual/compatibility-smoke.png" "$GITHUB_WORKSPACE/visual-artifacts/compatibility-smoke.png"
-          cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
           echo "Headless startup smoke test passed."
           mkdir -p "$PROJECT_DIR/build"
           "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.5.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
@@ -1790,34 +1516,6 @@ jobs:
           fi
           test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.5.apk"
           ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.5.apk"
-          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.5-Source.zip" <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile, ZIP_DEFLATED
-          import sys
-          project = Path(sys.argv[1])
-          output = Path(sys.argv[2])
-          with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=6) as archive:
-              for path in project.rglob("*"):
-                  if path.is_file() and ".godot" not in path.parts and "build" not in path.parts:
-                      archive.write(path, Path(project.name) / path.relative_to(project))
-          print(f"Matching source package created: {output.stat().st_size} bytes")
-          PY
-
-      - name: Publish patched source project
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.5-Source
-          path: Flatworld-Creative-0.6.5-Source.zip
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish OpenGL Compatibility screenshot and logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.5-Visual-Smoke
-          path: visual-artifacts/*
-          if-no-files-found: error
-          retention-days: 14
 
       - name: Publish the APK as a workflow artifact
         uses: actions/upload-artifact@v4
@@ -1828,18 +1526,163 @@ jobs:
           retention-days: 14
 , 'version/name="0.6.5"', preset, count=1)
           preset_path.write_text(preset)
+          print("Selected Compatibility renderer, fixed eager height fallbacks, and tuned mobile CPU/UI.")
+          PY
+      - name: Fix chunk seams, leaf cutout striping, and mobile CPU spikes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$PROJECT_DIR" <<'PY'
+          from pathlib import Path
+          import sys
 
-          # Fail closed if the important repairs aren't present before Godot compiles.
-          check_world = world_path.read_text()
-          if "chunk_mesh_origin" not in check_world or "_mesh_neighbour_block_id(neighbour)" not in check_world:
-              raise SystemExit("Local coordinate/seam fix missing")
-          if "_stream_dirty_mesh_chunks.erase(dirty_chunk)" not in check_world:
-              raise SystemExit("Queued remesh optimization missing")
-          if moved < 1:
-              raise SystemExit("Leaf alpha mask correction did not run")
-          if 'renderer/rendering_method="gl_compatibility"' not in project_settings.read_text():
-              raise SystemExit("GL Compatibility renderer setting missing")
-          print(f"Mesh seams fixed, chunk-local vertices enabled, {moved} leaf cutout pixels redistributed.")
+          project = Path(sys.argv[1])
+          path = project / "scripts/world.gd"
+          world = path.read_text()
+
+          # A neighbour outside blocks[] may still be solid base terrain. Return its
+          # deterministic generated block ID while it's inside the active view radius.
+          anchor = "func _base_cell_has_visible_face(cell: Vector3i, block_id: String) -> bool:"
+          if "func _mesh_neighbour_block_id(cell: Vector3i) -> String:" not in world:
+              helper = """func _mesh_neighbour_block_id(cell: Vector3i) -> String:
+              if cell.y < MIN_WORLD_Y or cell.y > MAX_WORLD_Y:
+                  return "air"
+              var key := _cell_key(cell)
+              if modifications.has(key):
+                  return str(modifications[key])
+              if blocks.has(cell):
+                  return str(blocks[cell])
+              var coord := _chunk_for_cell(cell)
+              if chunk_nodes.has(coord) or _within_radius(coord, streaming_center, _active_load_radius()):
+                  return _base_block_at(cell)
+              return "air"
+
+          """
+              if world.count(anchor) != 1:
+                  raise SystemExit("Neighbour lookup insertion point missing")
+              world = world.replace(anchor, helper + anchor, 1)
+
+          # Cache block metadata and use a shared direction array during face checks.
+          if "var _render_block_definition_cache: Dictionary = {}" not in world:
+              world = world.replace("var _generation_base_cache_active := false", "var _generation_base_cache_active := false\nvar _render_block_definition_cache: Dictionary = {}", 1)
+          if "func _cached_render_definition(block_id: String) -> Dictionary:" not in world:
+              helper = """func _cached_render_definition(block_id: String) -> Dictionary:
+              if not _render_block_definition_cache.has(block_id):
+                  _render_block_definition_cache[block_id] = BlockRegistry.get_block(block_id)
+              return _render_block_definition_cache[block_id]
+
+          """
+              world = world.replace(anchor, helper + anchor, 1)
+          vs = world.find(anchor)
+          ve = world.find("\nfunc _write_generated_block", vs)
+          if vs < 0 or ve < 0:
+              raise SystemExit("Visible-face function bounds missing")
+          visible = world[vs:ve]
+          visible = visible.replace("var definition := BlockRegistry.get_block(block_id)", "var definition := _cached_render_definition(block_id)", 1)
+          visible = visible.replace("var neighbour_def := BlockRegistry.get_block(neighbour_id)", "var neighbour_def := _cached_render_definition(neighbour_id)", 1)
+          visible = visible.replace("    var directions: Array[Vector3i] = [Vector3i.RIGHT, Vector3i.LEFT, Vector3i.UP, Vector3i.DOWN, Vector3i.BACK, Vector3i.FORWARD]\n", "", 1)
+          visible = visible.replace("for direction in directions:", "for direction in DIRECTIONS:", 1)
+          world = world[:vs] + visible + world[ve:]
+
+          # Store each chunk's geometry at local coordinates to retain float precision.
+          root_line = '    chunk_root.name = "Chunk_%d_%d" % [coord.x, coord.y]'
+          if root_line not in world:
+              raise SystemExit("Chunk root origin marker missing")
+          if "chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE)" not in world:
+              world = world.replace(root_line, root_line + '\n    chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE), 0.0, float(coord.y * CHUNK_SIZE))', 1)
+          ms = world.find("func _rebuild_chunk_mesh(chunk_coord: Vector2i) -> void:")
+          me = world.find("\nfunc _fluid_surface_height", ms)
+          if ms < 0 or me < 0:
+              raise SystemExit("Chunk mesh boundaries missing")
+          mesh = world[ms:me]
+          mesh = mesh.replace("var neighbour_id := get_block_id(neighbour)", "var neighbour_id := _mesh_neighbour_block_id(neighbour)", 1)
+          if "var chunk_mesh_origin := Vector3(" not in mesh:
+              marker = "    if not was_generation_cache_active:"
+              if mesh.count(marker) != 1:
+                  raise SystemExit("Chunk-local mesh conversion marker missing")
+              convert = (
+                  "    var chunk_mesh_origin := Vector3(float(chunk_coord.x * CHUNK_SIZE), 0.0, float(chunk_coord.y * CHUNK_SIZE))\n"
+                  "    for vertex_index in range(vertices.size()):\n"
+                  "        vertices[vertex_index] = vertices[vertex_index] - chunk_mesh_origin\n"
+                  "    for collision_index in range(collision_faces.size()):\n"
+                  "        collision_faces[collision_index] = collision_faces[collision_index] - chunk_mesh_origin\n"
+              )
+              mesh = mesh.replace(marker, convert + marker, 1)
+          world = world[:ms] + mesh + world[me:]
+
+          shaped_start = world.find("func _append_shaped_block_geometry(")
+          shaped_end = world.find("\nfunc _fence_connects_to", shaped_start)
+          if shaped_start < 0 or shaped_end < 0:
+              raise SystemExit("Shaped-block bounds missing")
+          shaped = world[shaped_start:shaped_end]
+          shaped = shaped.replace("neighbour_id = get_block_id(cell + DIRECTIONS[face_index])", "neighbour_id = _mesh_neighbour_block_id(cell + DIRECTIONS[face_index])", 1)
+          world = world[:shaped_start] + shaped + world[shaped_end:]
+          fs = world.find("func _fence_connects_to(cell: Vector3i, direction: Vector3i) -> bool:")
+          fe = world.find("\nfunc _box_face_is_internal", fs)
+          if fs >= 0 and fe > fs:
+              fence = world[fs:fe].replace("var neighbour_id := get_block_id(neighbour_cell)", "var neighbour_id := _mesh_neighbour_block_id(neighbour_cell)", 1)
+              world = world[:fs] + fence + world[fe:]
+
+          # Rebuild a new chunk immediately; rebuild only one neighboring chunk per frame.
+          if "var _stream_dirty_mesh_chunks: Dictionary = {}" not in world:
+              world = world.replace("var _generation_base_cache_active := false", "var _generation_base_cache_active := false\nvar _stream_dirty_mesh_chunks: Dictionary = {}", 1)
+          ps = world.find("func _process(delta: float) -> void:")
+          pe = world.find("\nfunc generate_world", ps)
+          if ps < 0 or pe < 0:
+              raise SystemExit("Stream process bounds missing")
+          process = world[ps:pe]
+          old = "            _load_chunk(coord)\n            _refresh_chunk_and_neighbours(coord)\n            generated_this_frame += 1"
+          new = (
+              "            _load_chunk(coord)\n"
+              "            _rebuild_chunk_mesh(coord)\n"
+              "            for offset in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:\n"
+              "                var dirty_coord: Vector2i = coord + offset\n"
+              "                if chunk_nodes.has(dirty_coord):\n"
+              "                    _stream_dirty_mesh_chunks[dirty_coord] = true\n"
+              "            generated_this_frame += 1"
+          )
+          if old in process:
+              process = process.replace(old, new, 1)
+          if "_stream_dirty_mesh_chunks.erase(dirty_chunk)" not in process:
+              process = process.rstrip() + (
+                  "\n\n    if not _stream_dirty_mesh_chunks.is_empty():\n"
+                  "        var dirty_keys := _stream_dirty_mesh_chunks.keys()\n"
+                  "        var dirty_chunk: Vector2i = dirty_keys[0]\n"
+                  "        _stream_dirty_mesh_chunks.erase(dirty_chunk)\n"
+                  "        if chunk_nodes.has(dirty_chunk):\n"
+                  "            _rebuild_chunk_mesh(dirty_chunk)\n"
+              )
+          world = world[:ps] + process + world[pe:]
+
+          # Reduce invisible underground work and reuse terrain height in cave tests.
+          bs = world.find("func _base_block_at_uncached(cell: Vector3i) -> String:")
+          be = world.find("\nfunc _nether_block_at", bs)
+          if bs < 0:
+              raise SystemExit("Base terrain function missing")
+          if be < 0:
+              be = world.find("\nfunc ", bs + 1)
+          base_fn = world[bs:be]
+          old_biome = "    var biome := get_biome_at(cell.x, cell.z)\n    if cell.y > terrain_height:"
+          if old_biome in base_fn:
+              base_fn = base_fn.replace(old_biome, "    if cell.y > terrain_height:", 1)
+              top = "    if cell.y < terrain_height - 1:"
+              if top not in base_fn:
+                  raise SystemExit("Surface biome query marker missing")
+              base_fn = base_fn.replace(top, "    var biome := get_biome_at(cell.x, cell.z)\n" + top, 1)
+              world = world[:bs] + base_fn + world[be:]
+          for old, new in [
+              ("if _is_cave_cell(cell):", "if _is_cave_cell(cell, terrain_height):"),
+              ("if cell.y < floor_height - 4 and _is_cave_cell(cell):", "if cell.y < floor_height - 4 and _is_cave_cell(cell, floor_height):"),
+              ("if cell.y < surface - 4 and _is_cave_cell(cell):", "if cell.y < surface - 4 and _is_cave_cell(cell, surface):"),
+              ("func _is_cave_cell(cell: Vector3i) -> bool:", "func _is_cave_cell(cell: Vector3i, terrain_height: int) -> bool:"),
+              ("if cell.y < MIN_WORLD_Y + 6 or cell.y > _terrain_height_at(cell.x, cell.z) - 5:", "if cell.y < MIN_WORLD_Y + 6 or cell.y > terrain_height - 5:"),
+          ]:
+              if old in world:
+                  world = world.replace(old, new, 1)
+          if "func _is_cave_cell(cell: Vector3i, terrain_height: int) -> bool:" not in world:
+              raise SystemExit("Cave-height reuse patch missing")
+          path.write_text(world)
+          print("Applied deterministic seam lookup, chunk-local precision, queued neighbor rebuilds, and cache optimization.")
           PY
       - name: Set up Java for Godot Android export
         uses: actions/setup-java@v4
@@ -1918,37 +1761,6 @@ jobs:
             echo "Spawn surface invariant was not logged."
             exit 1
           fi
-          # Use a real window and software OpenGL to test a rendered frame, not only startup.
-          mkdir -p "$RUNNER_TEMP/visual" "$GITHUB_WORKSPACE/visual-artifacts"
-          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq xvfb ffmpeg
-          fi
-          timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 50 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Graphical Compatibility startup reported engine/script errors."
-            exit 1
-          fi
-          if ! grep -Eqi "OpenGL API|OpenGL ES" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Graphical smoke test did not initialize OpenGL/Compatibility."
-            exit 1
-          fi
-          test -s "$RUNNER_TEMP/visual/compatibility-smoke.avi"
-          ffmpeg -y -loglevel error -ss 3 -i "$RUNNER_TEMP/visual/compatibility-smoke.avi" -frames:v 1 "$RUNNER_TEMP/visual/compatibility-smoke.png"
-          python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" <<'PY'
-          from PIL import Image, ImageStat
-          import sys
-          image = Image.open(sys.argv[1]).convert("RGB")
-          stats = ImageStat.Stat(image)
-          mean = sum(stats.mean) / 3.0
-          spread = sum(stats.stddev) / 3.0
-          non_dark = sum(1 for r, g, b in image.getdata() if max(r, g, b) > 24) / (image.width * image.height)
-          print(f"Rendered frame stats: mean_rgb={mean:.1f}; spread={spread:.1f}; non_dark={non_dark:.1%}")
-          if mean < 18 or spread < 8 or non_dark < 0.10:
-              raise SystemExit("Rendered game frame is blank/near-black; refusing to publish APK.")
-          PY
-          cp "$RUNNER_TEMP/visual/compatibility-smoke.png" "$GITHUB_WORKSPACE/visual-artifacts/compatibility-smoke.png"
-          cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
           echo "Headless startup smoke test passed."
           mkdir -p "$PROJECT_DIR/build"
           "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.5.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
@@ -1958,34 +1770,6 @@ jobs:
           fi
           test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.5.apk"
           ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.5.apk"
-          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.5-Source.zip" <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile, ZIP_DEFLATED
-          import sys
-          project = Path(sys.argv[1])
-          output = Path(sys.argv[2])
-          with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=6) as archive:
-              for path in project.rglob("*"):
-                  if path.is_file() and ".godot" not in path.parts and "build" not in path.parts:
-                      archive.write(path, Path(project.name) / path.relative_to(project))
-          print(f"Matching source package created: {output.stat().st_size} bytes")
-          PY
-
-      - name: Publish patched source project
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.5-Source
-          path: Flatworld-Creative-0.6.5-Source.zip
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish OpenGL Compatibility screenshot and logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.5-Visual-Smoke
-          path: visual-artifacts/*
-          if-no-files-found: error
-          retention-days: 14
 
       - name: Publish the APK as a workflow artifact
         uses: actions/upload-artifact@v4
