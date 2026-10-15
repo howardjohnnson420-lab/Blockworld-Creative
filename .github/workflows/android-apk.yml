@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc3c1fe1e2cc201c5ff43b4bd294.dl.dropboxusercontent.com/cd/0/get/DKGB3CtLE6HnUm_AiJjyq7Y9686PxdTNBHr6EU_CK1UG5CVyu4JwuwLHl3eBwOlXNd-8ljikrhT-rVd6NdaGbO69i1UrUIH3w35FAxtEC-lrdqfTBCb8w-31NfRyIqy8_6oWoXknVZT4TDT1Rt9SC4YQxnQ5JUfr3RoJo98vlLeRlA/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uc9fc100c7b0439fd445aa6b6908.dl.dropboxusercontent.com/cd/0/get/DKFssASexJU37UzoKTjg0usXo6-4WfU96YQrnjVhfw_KLzieD90ijACZqE7D23i88NT8c4aS26nvXRbpabHNiT-jullGVEJjj1aJfiH_zUNgzKv9-GANEaS87dkbZgousGOXQzJqGzV4nz6xXcpsd8dnoD1Jo3elbVRY6nWJPrAXBQ/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1178,20 +1178,39 @@ jobs:
               if not pattern.search(settings):
                   raise SystemExit("Renderer setting missing: " + key)
               settings = pattern.sub(key + '="gl_compatibility"', settings, count=1)
-          settings = re.sub(r'^config/version=.*$', 'config/version="0.6.0"', settings, count=1, flags=re.MULTILINE)
+          settings = re.sub(r'^config/version=.*$', 'config/version="0.6.1"', settings, count=1, flags=re.MULTILINE)
           settings_path.write_text(settings)
-          (project / "VERSION.txt").write_text("0.6.0\n")
+          (project / "VERSION.txt").write_text("0.6.1\n")
 
           preset_path = project / "export_presets.cfg"
           preset = preset_path.read_text()
-          preset = re.sub(r'^version/code=.*$', 'version/code=600', preset, count=1, flags=re.MULTILINE)
-          preset = re.sub(r'^version/name=.*$', 'version/name="0.6.0"', preset, count=1, flags=re.MULTILINE)
+          preset = re.sub(r'^version/code=.*$', 'version/code=601', preset, count=1, flags=re.MULTILINE)
+          preset = re.sub(r'^version/name=.*$', 'version/name="0.6.1"', preset, count=1, flags=re.MULTILINE)
           preset_path.write_text(preset)
 
           # Local chunk-space mesh coordinates reduce floating-point precision loss:
           # the per-chunk Node3D now carries the world origin, and vertices stay near 0..16.
           world_path = project / "scripts/world.gd"
           world = world_path.read_text()
+          # Restore the correct outward-facing index order. FACE_CORNERS is already
+          # ordered outward for each face; reversing indices made normals point inward,
+          # so CULL_BACK discarded the surfaces the player should see.
+          winding_pairs = [
+              ("PackedInt32Array([base_index, base_index + 2, base_index + 1, base_index, base_index + 3, base_index + 2])",
+               "PackedInt32Array([base_index, base_index + 1, base_index + 2, base_index, base_index + 2, base_index + 3])"),
+              ("PackedInt32Array([base_index,base_index+2,base_index+1,base_index,base_index+3,base_index+2])",
+               "PackedInt32Array([base_index,base_index+1,base_index+2,base_index,base_index+2,base_index+3])"),
+          ]
+          restored_faces = 0
+          for inward, outward in winding_pairs:
+              count = world.count(inward)
+              if count:
+                  world = world.replace(inward, outward)
+                  restored_faces += count
+          if restored_faces < 5:
+              raise SystemExit(f"Expected to restore at least five outward-facing index sequences; restored {restored_faces}")
+          print(f"Restored outward-facing winding for {restored_faces} mesh quad sites.")
+
           chunk_root_marker = '    chunk_root.name = "Chunk_%d_%d" % [coord.x, coord.y]'
           if world.count(chunk_root_marker) != 1:
               raise SystemExit("Chunk-root creation marker missing")
@@ -1388,8 +1407,8 @@ jobs:
 
           docs = project / "docs"
           docs.mkdir(exist_ok=True)
-          (docs / "RENDERING_FIX_0.6.0.md").write_text(
-              "# Rendering and performance fix 0.6.0\n\n"
+          (docs / "RENDERING_FIX_0.6.1.md").write_text(
+              "# Rendering and performance fix 0.6.1\n\n"
               "Previous Android builds used Godot Mobile/Vulkan. Godot issue #115217 documents horizontal "
               "3D corruption on some Android GPU/driver combinations; Compatibility/OpenGL ES is a documented "
               "workaround. This build selects gl_compatibility for default and mobile rendering and runs a "
@@ -1452,14 +1471,14 @@ jobs:
           cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
           echo "Headless startup and graphical Compatibility smoke tests passed."
           mkdir -p "$PROJECT_DIR/build"
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.0.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.1.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
           if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-export.log"; then
             echo "GDScript errors found during export; refusing to publish a broken APK."
             exit 1
           fi
-          test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.0.apk"
-          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.0.apk"
-          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.0-Source.zip" <<'PY'
+          test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.1.apk"
+          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.1.apk"
+          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.1-Source.zip" <<'PY'
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
           import sys
@@ -1479,23 +1498,23 @@ jobs:
       - name: Publish Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.0-Android
-          path: source/Flatworld_Creative_Godot/build/Flatworld-Creative-0.6.0.apk
+          name: Flatworld-Creative-0.6.1-Android
+          path: source/Flatworld_Creative_Godot/build/Flatworld-Creative-0.6.1.apk
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish patched source project
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.0-Source
-          path: Flatworld-Creative-0.6.0-Source.zip
+          name: Flatworld-Creative-0.6.1-Source
+          path: Flatworld-Creative-0.6.1-Source.zip
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish Compatibility-rendered screenshot and logs
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.0-Visual-Smoke
+          name: Flatworld-Creative-0.6.1-Visual-Smoke
           path: visual-artifacts/*
           if-no-files-found: error
           retention-days: 14
