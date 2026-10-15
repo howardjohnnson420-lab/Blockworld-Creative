@@ -824,10 +824,12 @@ jobs:
           # Keep a block's top edge attached to the top row of its 16x16 texture.
           # In the mesh's vertical-face vertex order, positions are bottom/top/top/bottom.
           old_cube = '            face_uv = [_tile_uv(tile_index, 0, 0), _tile_uv(tile_index, 0, 1), _tile_uv(tile_index, 1, 1), _tile_uv(tile_index, 1, 0)]'
-          new_cube = '''            if face_index in [0, 1, 4, 5]:
-                  face_uv = [_tile_uv(tile_index, 0, 1), _tile_uv(tile_index, 0, 0), _tile_uv(tile_index, 1, 0), _tile_uv(tile_index, 1, 1)]
-              else:
-                  face_uv = [_tile_uv(tile_index, 0, 0), _tile_uv(tile_index, 0, 1), _tile_uv(tile_index, 1, 1), _tile_uv(tile_index, 1, 0)]'''
+          new_cube = "\n".join([
+              "            if face_index in [0, 1, 4, 5]:",
+              "                face_uv = [_tile_uv(tile_index, 0, 1), _tile_uv(tile_index, 0, 0), _tile_uv(tile_index, 1, 0), _tile_uv(tile_index, 1, 1)]",
+              "            else:",
+              "                face_uv = [_tile_uv(tile_index, 0, 0), _tile_uv(tile_index, 0, 1), _tile_uv(tile_index, 1, 1), _tile_uv(tile_index, 1, 0)]",
+          ])
           if source.count(old_cube) != 1:
               raise SystemExit(f"Expected one cube UV assignment, found {source.count(old_cube)}")
           source = source.replace(old_cube, new_cube, 1)
@@ -836,17 +838,19 @@ jobs:
           # exactly the same fluid. These coincident surfaces z-fight into the repeating
           # triangles seen in the ocean and add an enormous amount of unnecessary geometry.
           helper_anchor = 'func _append_shaped_block_geometry(cell: Vector3i, shape_id: String, tiles: Dictionary, block_solid: bool, state: Dictionary, vertices: PackedVector3Array, uvs: PackedVector2Array, normals: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array, collision_faces: PackedVector3Array) -> void:'
-          fluid_helper = '''func _fluid_surface_height(cell: Vector3i) -> float:
-              var fluid_id := get_block_id(cell)
-              if fluid_id not in ["water", "lava"]:
-                  return 0.0
-              var fluid_state := get_block_state(cell)
-              var fluid_level := int(fluid_state.get("level", 0))
-              var fluid_source := bool(fluid_state.get("source", fluid_level == 0))
-              var falling := bool(fluid_state.get("falling", false)) or fluid_level == 8
-              return 1.0 if fluid_source or falling else clampf(1.0 - float(fluid_level) / 8.0, 0.125, 1.0)
-
-          '''
+          fluid_helper = "\n".join([
+              "func _fluid_surface_height(cell: Vector3i) -> float:",
+              "    var fluid_id := get_block_id(cell)",
+              '    if fluid_id not in ["water", "lava"]:',
+              "        return 0.0",
+              "    var fluid_state := get_block_state(cell)",
+              '    var fluid_level := int(fluid_state.get("level", 0))',
+              '    var fluid_source := bool(fluid_state.get("source", fluid_level == 0))',
+              '    var falling := bool(fluid_state.get("falling", false)) or fluid_level == 8',
+              '    return 1.0 if fluid_source or falling else clampf(1.0 - float(fluid_level) / 8.0, 0.125, 1.0)',
+              "",
+              "",
+          ])
           if source.count(helper_anchor) != 1:
               raise SystemExit("Shaped geometry function anchor missing")
           source = source.replace(helper_anchor, fluid_helper + helper_anchor, 1)
@@ -855,20 +859,21 @@ jobs:
           shape_end = source.index('\nfunc _fence_connects_to', shape_start)
           shaped = source[shape_start:shape_end]
           face_name_marker = '            var face_name := "side"'
-          fluid_face_block = '''            var face_box_min := box_min
-              var face_box_max := box_max
-              if shape_id == "fluid" and at_cell_boundary and neighbour_id == get_block_id(cell):
-                  # Shared horizontal planes within the same liquid are hidden to prevent
-                  # z-fighting and a huge redundant triangle count in oceans.
-                  if face_index in [2, 3]:
-                      continue
-                  var adjacent_height := _fluid_surface_height(cell + DIRECTIONS[face_index])
-                  if adjacent_height >= box_max.y - 0.0001:
-                      continue
-                  face_box_min.y = maxf(box_min.y, adjacent_height)
-                  if face_box_min.y >= face_box_max.y - 0.0001:
-                      continue
-          '''
+          fluid_face_block = "\n".join([
+              "            var face_box_min := box_min",
+              "            var face_box_max := box_max",
+              "            if shape_id == \\"fluid\\" and at_cell_boundary and neighbour_id == get_block_id(cell):",
+              "                # Shared fluid faces cause z-fighting and excessive triangles in oceans.",
+              "                if face_index in [2, 3]:",
+              "                    continue",
+              "                var adjacent_height := _fluid_surface_height(cell + DIRECTIONS[face_index])",
+              "                if adjacent_height >= box_max.y - 0.0001:",
+              "                    continue",
+              "                face_box_min.y = maxf(box_min.y, adjacent_height)",
+              "                if face_box_min.y >= face_box_max.y - 0.0001:",
+              "                    continue",
+              "",
+          ])
           if shaped.count(face_name_marker) != 1:
               raise SystemExit(f"Face-name insertion target count {shaped.count(face_name_marker)}")
           shaped = shaped.replace(face_name_marker, fluid_face_block + face_name_marker, 1)
@@ -878,18 +883,20 @@ jobs:
           uv_end = shaped.find("            for corner_index in range(4):", uv_start)
           if uv_start < 0 or uv_end < 0:
               raise SystemExit("Shaped face UV section not found")
-          new_shaped_uv = '''            var face_uvs: Array[Vector2]
-              if face_index in [0, 1, 4, 5]:
-                  face_uvs = [
-                      _tile_uv(tile_index, 0, 1), _tile_uv(tile_index, 0, 0),
-                      _tile_uv(tile_index, 1, 0), _tile_uv(tile_index, 1, 1)
-                  ]
-              else:
-                  face_uvs = [
-                      _tile_uv(tile_index, 0, 0), _tile_uv(tile_index, 0, 1),
-                      _tile_uv(tile_index, 1, 1), _tile_uv(tile_index, 1, 0)
-                  ]
-          '''
+          new_shaped_uv = "\n".join([
+              "            var face_uvs: Array[Vector2]",
+              "            if face_index in [0, 1, 4, 5]:",
+              "                face_uvs = [",
+              "                    _tile_uv(tile_index, 0, 1), _tile_uv(tile_index, 0, 0),",
+              "                    _tile_uv(tile_index, 1, 0), _tile_uv(tile_index, 1, 1)",
+              "                ]",
+              "            else:",
+              "                face_uvs = [",
+              "                    _tile_uv(tile_index, 0, 0), _tile_uv(tile_index, 0, 1),",
+              "                    _tile_uv(tile_index, 1, 1), _tile_uv(tile_index, 1, 0)",
+              "                ]",
+              "",
+          ])
           shaped = shaped[:uv_start] + new_shaped_uv + shaped[uv_end:]
           for a, b in [
               ("lerpf(box_min.x, box_max.x, unit_corner.x)", "lerpf(face_box_min.x, face_box_max.x, unit_corner.x)"),
@@ -910,11 +917,13 @@ jobs:
           plant_uv_end = plant.find("            var normal := original_normal", plant_uv_start)
           if plant_uv_start < 0 or plant_uv_end < 0:
               raise SystemExit("Plant face UV section not found")
-          new_plant_uv = '''            var face_uvs: Array[Vector2] = [
-                      _tile_uv(tile_index, 0, 1), _tile_uv(tile_index, 0, 0),
-                      _tile_uv(tile_index, 1, 0), _tile_uv(tile_index, 1, 1)
-                  ]
-          '''
+          new_plant_uv = "\n".join([
+              "            var face_uvs: Array[Vector2] = [",
+              "                _tile_uv(tile_index, 0, 1), _tile_uv(tile_index, 0, 0),",
+              "                _tile_uv(tile_index, 1, 0), _tile_uv(tile_index, 1, 1)",
+              "            ]",
+              "",
+          ])
           plant = plant[:plant_uv_start] + new_plant_uv + plant[plant_uv_end:]
           source = source[:plant_start] + plant + source[plant_end:]
 
