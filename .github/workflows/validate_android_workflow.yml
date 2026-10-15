@@ -1,0 +1,42 @@
+name: Validate Android build workflow
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/android-apk.yml"
+      - ".github/workflows/validate_android_workflow.yml"
+jobs:
+  validate-workflow:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Validate workflow YAML structure
+        run: |
+          python3 -m pip install --disable-pip-version-check PyYAML
+          python3 - <<'PY'
+          import yaml
+          from pathlib import Path
+          path = Path(".github/workflows/android-apk.yml")
+          text = path.read_text()
+          doc = yaml.safe_load(text)
+          if not isinstance(doc, dict):
+              raise SystemExit("Workflow root is not a YAML mapping")
+          jobs = doc.get("jobs")
+          if not isinstance(jobs, dict) or not jobs:
+              raise SystemExit(f"No jobs mapping found. Root keys={list(doc.keys())!r}")
+          job = jobs.get("android-apk")
+          if not isinstance(job, dict):
+              raise SystemExit(f"android-apk job missing; found={list(jobs)!r}")
+          steps = job.get("steps")
+          if not isinstance(steps, list):
+              raise SystemExit("android-apk.steps is not a list")
+          names = [step.get("name", "<unnamed>") for step in steps if isinstance(step, dict)]
+          print(f"YAML parses. jobs={list(jobs)} steps={len(steps)}")
+          for i, name in enumerate(names, 1):
+              print(f"{i:02d}. {name}")
+          if len([name for name in names if name.startswith("Import, smoke-test")]) != 1:
+              raise SystemExit("Expected exactly one import/smoke-test/export step")
+          if len([name for name in names if name == "Publish Android APK"]) != 1:
+              raise SystemExit("Expected exactly one APK publish step")
+          PY
