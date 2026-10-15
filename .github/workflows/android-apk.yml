@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://ucf37ba9ccd21d92f8bfe525262c.dl.dropboxusercontent.com/cd/0/get/DKEodfHH5aTDyDRMambQbMpv5gneDxheKftTXckZ6RJ5pKA1aswpG7WB2UVjFhCKy4YUiAYJTdzaltlY6aOlQO9L8mlnSc0bDzCACfBC0mYxq4E-ky_9Q4hhSeA4D25I9_l3QSUYjW1oTYMNr3fi4pFIDgDaGeaosKJaRWVyYkgf2Q/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://ucfedf2b6f8ba301b46655f20768.dl.dropboxusercontent.com/cd/0/get/DKFQ950GDTc30DvGoY2NNxd7RCvTt51k52NLXKw5jaSm0lG-LsGkv2jPWUbA0xpNfssiFb4WHooav7JiPbx_QPufkhs7tN6K26P2GdFQt3N6Zt4PUPf1XhQivqk8zfwCZSloO6bxUWnfIEAYb2AeGI2Mbrtm8An-_i0Rl1rs8Kbybw/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
