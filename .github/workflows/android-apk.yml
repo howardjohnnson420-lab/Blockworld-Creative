@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc7b1339e22c2695c96307f792c6.dl.dropboxusercontent.com/cd/0/get/DKG5zV_--6BhDXAnFqv5J8N4OwhBpEm9mAGFqhKn6KNvpPCNkpyWtLWvPXxlAMUgaF-q0CS9Vv2sita6Pioru-qiWra95h0QBBVxS70XPDypZzkL7RaKxkWoElNrO6agEbuGwS9z47VcRatuUyp0iGn3Hhv-L4j_rU8ElS_tU9Z_SA/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uc3c1fe1e2cc201c5ff43b4bd294.dl.dropboxusercontent.com/cd/0/get/DKGB3CtLE6HnUm_AiJjyq7Y9686PxdTNBHr6EU_CK1UG5CVyu4JwuwLHl3eBwOlXNd-8ljikrhT-rVd6NdaGbO69i1UrUIH3w35FAxtEC-lrdqfTBCb8w-31NfRyIqy8_6oWoXknVZT4TDT1Rt9SC4YQxnQ5JUfr3RoJo98vlLeRlA/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1104,6 +1104,60 @@ jobs:
           (project / "VERSION.txt").write_text("0.5.9\n")
           print(f"Fixed {changed} quad index sites and optimized repeated base-block/light-source work.")
           PY
+      - name: Set up Java for Godot Android export
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0"
+
+      - name: Install Python texture-generation dependency
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore deterministic texture files in the build workspace
+        run: |
+          python -m pip install --disable-pip-version-check Pillow
+          python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
+
+      - name: Download Godot 4.7.2 and matching Android export templates
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"             --output "$RUNNER_TEMP/godot.zip"
+          mkdir -p "$RUNNER_TEMP/godot"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"             --output "$RUNNER_TEMP/godot-templates.tpz"
+          mkdir -p "$RUNNER_TEMP/templates" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/templates"
+          if [ -d "$RUNNER_TEMP/templates/templates" ]; then
+            cp -a "$RUNNER_TEMP/templates/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          else
+            cp -a "$RUNNER_TEMP/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          fi
+          printf '4.7.2.stable' > "$HOME/.local/share/godot/export_templates/4.7.2.stable/version.txt"
+          "$GODOT_BIN" --version
+
+      - name: Configure Godot Android SDK paths
+        run: |
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          EOF
+
       - name: Switch Android to Compatibility renderer and optimize voxel chunks
         shell: bash
         run: |
@@ -1120,238 +1174,22 @@ jobs:
           settings_path = project / "project.godot"
           settings = settings_path.read_text()
           for key in ('renderer/rendering_method', 'renderer/rendering_method.mobile'):
-              pattern = re.compile(r'^' + re.escape(key) + r'=.*
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: true
-          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0"
-
-      - name: Install Python texture-generation dependency
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Restore deterministic texture files in the build workspace
-        run: |
-          python -m pip install --disable-pip-version-check Pillow
-          python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
-
-      - name: Download Godot 4.7.2 and matching Android export templates
-        run: |
-          set -euo pipefail
-          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"             --output "$RUNNER_TEMP/godot.zip"
-          mkdir -p "$RUNNER_TEMP/godot"
-          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
-          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)"
-          test -n "$GODOT_BIN"
-          chmod +x "$GODOT_BIN"
-          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
-          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"             --output "$RUNNER_TEMP/godot-templates.tpz"
-          mkdir -p "$RUNNER_TEMP/templates" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
-          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/templates"
-          if [ -d "$RUNNER_TEMP/templates/templates" ]; then
-            cp -a "$RUNNER_TEMP/templates/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
-          else
-            cp -a "$RUNNER_TEMP/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
-          fi
-          printf '4.7.2.stable' > "$HOME/.local/share/godot/export_templates/4.7.2.stable/version.txt"
-          "$GODOT_BIN" --version
-
-      - name: Configure Godot Android SDK paths
-        run: |
-          mkdir -p "$HOME/.config/godot"
-          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
-          [gd_resource type="EditorSettings" format=3]
-
-          [resource]
-          export/android/android_sdk_path = "$ANDROID_HOME"
-          export/android/java_sdk_path = "$JAVA_HOME"
-          EOF
-
-, re.MULTILINE)
+              pattern = re.compile(r'^' + re.escape(key) + r'=.*$', re.MULTILINE)
               if not pattern.search(settings):
                   raise SystemExit("Renderer setting missing: " + key)
               settings = pattern.sub(key + '="gl_compatibility"', settings, count=1)
-          settings = re.sub(r'^config/version=.*
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: true
-          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0"
-
-      - name: Install Python texture-generation dependency
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Restore deterministic texture files in the build workspace
-        run: |
-          python -m pip install --disable-pip-version-check Pillow
-          python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
-
-      - name: Download Godot 4.7.2 and matching Android export templates
-        run: |
-          set -euo pipefail
-          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"             --output "$RUNNER_TEMP/godot.zip"
-          mkdir -p "$RUNNER_TEMP/godot"
-          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
-          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)"
-          test -n "$GODOT_BIN"
-          chmod +x "$GODOT_BIN"
-          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
-          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"             --output "$RUNNER_TEMP/godot-templates.tpz"
-          mkdir -p "$RUNNER_TEMP/templates" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
-          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/templates"
-          if [ -d "$RUNNER_TEMP/templates/templates" ]; then
-            cp -a "$RUNNER_TEMP/templates/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
-          else
-            cp -a "$RUNNER_TEMP/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
-          fi
-          printf '4.7.2.stable' > "$HOME/.local/share/godot/export_templates/4.7.2.stable/version.txt"
-          "$GODOT_BIN" --version
-
-      - name: Configure Godot Android SDK paths
-        run: |
-          mkdir -p "$HOME/.config/godot"
-          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
-          [gd_resource type="EditorSettings" format=3]
-
-          [resource]
-          export/android/android_sdk_path = "$ANDROID_HOME"
-          export/android/java_sdk_path = "$JAVA_HOME"
-          EOF
-
-, 'config/version="0.6.0"', settings, count=1, flags=re.MULTILINE)
+          settings = re.sub(r'^config/version=.*$', 'config/version="0.6.0"', settings, count=1, flags=re.MULTILINE)
           settings_path.write_text(settings)
           (project / "VERSION.txt").write_text("0.6.0\n")
 
           preset_path = project / "export_presets.cfg"
           preset = preset_path.read_text()
-          preset = re.sub(r'^version/code=.*
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: true
-          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0"
-
-      - name: Install Python texture-generation dependency
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Restore deterministic texture files in the build workspace
-        run: |
-          python -m pip install --disable-pip-version-check Pillow
-          python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
-
-      - name: Download Godot 4.7.2 and matching Android export templates
-        run: |
-          set -euo pipefail
-          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"             --output "$RUNNER_TEMP/godot.zip"
-          mkdir -p "$RUNNER_TEMP/godot"
-          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
-          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)"
-          test -n "$GODOT_BIN"
-          chmod +x "$GODOT_BIN"
-          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
-          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"             --output "$RUNNER_TEMP/godot-templates.tpz"
-          mkdir -p "$RUNNER_TEMP/templates" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
-          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/templates"
-          if [ -d "$RUNNER_TEMP/templates/templates" ]; then
-            cp -a "$RUNNER_TEMP/templates/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
-          else
-            cp -a "$RUNNER_TEMP/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
-          fi
-          printf '4.7.2.stable' > "$HOME/.local/share/godot/export_templates/4.7.2.stable/version.txt"
-          "$GODOT_BIN" --version
-
-      - name: Configure Godot Android SDK paths
-        run: |
-          mkdir -p "$HOME/.config/godot"
-          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
-          [gd_resource type="EditorSettings" format=3]
-
-          [resource]
-          export/android/android_sdk_path = "$ANDROID_HOME"
-          export/android/java_sdk_path = "$JAVA_HOME"
-          EOF
-
-, 'version/code=600', preset, count=1, flags=re.MULTILINE)
-          preset = re.sub(r'^version/name=.*
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: true
-          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0"
-
-      - name: Install Python texture-generation dependency
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Restore deterministic texture files in the build workspace
-        run: |
-          python -m pip install --disable-pip-version-check Pillow
-          python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
-
-      - name: Download Godot 4.7.2 and matching Android export templates
-        run: |
-          set -euo pipefail
-          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"             --output "$RUNNER_TEMP/godot.zip"
-          mkdir -p "$RUNNER_TEMP/godot"
-          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
-          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)"
-          test -n "$GODOT_BIN"
-          chmod +x "$GODOT_BIN"
-          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
-          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"             --output "$RUNNER_TEMP/godot-templates.tpz"
-          mkdir -p "$RUNNER_TEMP/templates" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
-          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/templates"
-          if [ -d "$RUNNER_TEMP/templates/templates" ]; then
-            cp -a "$RUNNER_TEMP/templates/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
-          else
-            cp -a "$RUNNER_TEMP/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
-          fi
-          printf '4.7.2.stable' > "$HOME/.local/share/godot/export_templates/4.7.2.stable/version.txt"
-          "$GODOT_BIN" --version
-
-      - name: Configure Godot Android SDK paths
-        run: |
-          mkdir -p "$HOME/.config/godot"
-          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
-          [gd_resource type="EditorSettings" format=3]
-
-          [resource]
-          export/android/android_sdk_path = "$ANDROID_HOME"
-          export/android/java_sdk_path = "$JAVA_HOME"
-          EOF
-
-, 'version/name="0.6.0"', preset, count=1, flags=re.MULTILINE)
+          preset = re.sub(r'^version/code=.*$', 'version/code=600', preset, count=1, flags=re.MULTILINE)
+          preset = re.sub(r'^version/name=.*$', 'version/name="0.6.0"', preset, count=1, flags=re.MULTILINE)
           preset_path.write_text(preset)
 
-          # Chunk meshes had world-coordinate vertices despite each chunk having its own Node3D.
-          # Local-space vertices stay near 0..16, reducing precision loss and depth artefacts.
+          # Local chunk-space mesh coordinates reduce floating-point precision loss:
+          # the per-chunk Node3D now carries the world origin, and vertices stay near 0..16.
           world_path = project / "scripts/world.gd"
           world = world_path.read_text()
           chunk_root_marker = '    chunk_root.name = "Chunk_%d_%d" % [coord.x, coord.y]'
@@ -1384,8 +1222,8 @@ jobs:
               mesh_func = mesh_func.replace(arrays_marker, localize + arrays_marker, 1)
               world = world[:mesh_start] + mesh_func + world[mesh_end:]
 
-          # Loading a chunk used to remesh neighbours immediately, rebuilding their concave
-          # collision BVHs repeatedly. Rebuild one queued neighbour per frame instead.
+          # Coalesce neighbour mesh/collision rebuilds during streaming. Rebuilding a
+          # ConcavePolygonShape3D for each neighbour every time a chunk arrives is costly.
           if "var _stream_dirty_mesh_chunks: Dictionary" not in world:
               field_anchor = "var _generation_base_cache_active := false"
               if world.count(field_anchor) != 1:
@@ -1428,8 +1266,7 @@ jobs:
           process_func = process_func.replace(flush_anchor, flush, 1)
           world = world[:process_start] + process_func + world[process_end:]
 
-          # A function call used as Dictionary.get's default is evaluated even when the key
-          # exists. The old height expression therefore regenerated noise for every voxel.
+          # Dictionary.get(key, expensive_call()) evaluates expensive_call() even if key exists.
           eager_height = "    var terrain_height := int(surface_heights.get(Vector2i(cell.x, cell.z), _terrain_height_at(cell.x, cell.z)))"
           lazy_height = (
               "    var terrain_key := Vector2i(cell.x, cell.z)\n"
@@ -1444,7 +1281,7 @@ jobs:
           elif "var terrain_key := Vector2i(cell.x, cell.z)" not in world:
               raise SystemExit("Base-block eager terrain-height lookup not found")
 
-          # Per-block transient expiry deep-copied state dictionaries every frame. Run at 10 Hz.
+          # Expire transient states at 10 Hz instead of deep-copying them every render frame.
           if "var _transient_tick_accumulator :=" not in world:
               tick_anchor = "var _block_light_scan_accumulator := 0.0"
               if world.count(tick_anchor) != 1:
@@ -1469,7 +1306,6 @@ jobs:
           world = world[:process_start] + process_func + world[process_end:]
           world_path.write_text(world)
 
-          # Shorter mobile far plane limits far-field work and improves depth precision.
           player_path = project / "scripts/player_controller.gd"
           player = player_path.read_text()
           fov_line = "    camera_node.fov = 70.0"
@@ -1573,60 +1409,6 @@ jobs:
               raise SystemExit("Chunk-local-coordinate assertion failed")
           print("Compatibility renderer selected; chunk coordinates localized; streaming and per-frame CPU work reduced.")
           PY
-      - name: Set up Java for Godot Android export
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: true
-          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0"
-
-      - name: Install Python texture-generation dependency
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Restore deterministic texture files in the build workspace
-        run: |
-          python -m pip install --disable-pip-version-check Pillow
-          python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
-
-      - name: Download Godot 4.7.2 and matching Android export templates
-        run: |
-          set -euo pipefail
-          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"             --output "$RUNNER_TEMP/godot.zip"
-          mkdir -p "$RUNNER_TEMP/godot"
-          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
-          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)"
-          test -n "$GODOT_BIN"
-          chmod +x "$GODOT_BIN"
-          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
-          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"             --output "$RUNNER_TEMP/godot-templates.tpz"
-          mkdir -p "$RUNNER_TEMP/templates" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
-          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/templates"
-          if [ -d "$RUNNER_TEMP/templates/templates" ]; then
-            cp -a "$RUNNER_TEMP/templates/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
-          else
-            cp -a "$RUNNER_TEMP/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
-          fi
-          printf '4.7.2.stable' > "$HOME/.local/share/godot/export_templates/4.7.2.stable/version.txt"
-          "$GODOT_BIN" --version
-
-      - name: Configure Godot Android SDK paths
-        run: |
-          mkdir -p "$HOME/.config/godot"
-          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
-          [gd_resource type="EditorSettings" format=3]
-
-          [resource]
-          export/android/android_sdk_path = "$ANDROID_HOME"
-          export/android/java_sdk_path = "$JAVA_HOME"
-          EOF
-
       - name: Import, smoke-test Compatibility renderer, and export Android APK
         shell: bash
         run: |
@@ -1650,7 +1432,6 @@ jobs:
             echo "Spawn surface invariant was not logged."
             exit 1
           fi
-          # Real graphical compatibility render under Mesa/OpenGL, not just headless parsing.
           if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq xvfb ffmpeg
