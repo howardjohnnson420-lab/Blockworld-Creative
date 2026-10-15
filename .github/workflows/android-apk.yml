@@ -407,15 +407,22 @@ jobs:
               "    sun.shadow_enabled = not OS.has_feature(\"mobile\")\n"
               "    sun.directional_shadow_max_distance = 72.0 if not OS.has_feature(\"mobile\") else 32.0")
           # Guard fresh worlds against any bad vertical start and keep saved worlds intact.
-          guard_anchor = "    var saved_spawn_invalid := false"
-          if guard_anchor not in main:
-              raise SystemExit("saved spawn guard anchor missing")
-          new_world_guard = """    var saved_spawn_invalid := false
-              if saved.is_empty() and initial_dimension == "overworld":
+          if "    var saved_spawn_invalid := false" in main:
+              guard_anchor = "    var saved_spawn_invalid := false"
+              new_world_guard = """    if saved.is_empty() and initial_dimension == "overworld":
                   var fresh_spawn := world.get_spawn_position()
                   player.global_position = fresh_spawn
                   player.spawn_position = fresh_spawn
-              """
+              var saved_spawn_invalid := false"""
+          elif "    var invalid_spawn := false" in main:
+              guard_anchor = "    var invalid_spawn := false"
+              new_world_guard = """    if saved.is_empty() and initial_dimension == "overworld":
+                  var fresh_spawn := world.get_spawn_position()
+                  player.global_position = fresh_spawn
+                  player.spawn_position = fresh_spawn
+              var invalid_spawn := false"""
+          else:
+              raise SystemExit("Could not find saved-player invalid-position guard")
           main = main.replace(guard_anchor, new_world_guard.rstrip(), 1)
           # At this point the resolved position should sit just above the column surface.
           log_anchor = "    _load_entity_catalogue()"
@@ -432,7 +439,6 @@ jobs:
                       world.prepare_position(player.global_position)
               """
           main = main.replace(log_anchor, invariant + log_anchor, 1)
-          main_path.write_text(main)
           main_path.write_text(main)
 
           player_path = project / "scripts/player_controller.gd"
