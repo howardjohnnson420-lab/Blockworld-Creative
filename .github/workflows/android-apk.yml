@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc0b13760d8439cc9191d634515a.dl.dropboxusercontent.com/cd/0/get/DKGZjpR5SwZbSoFVTPPpfnjV2ThE7elOCz0XbWv4r6kYwmbbIB1Y2FsKP7cTAT1UNFYuh9PxYIOU8J_0sQ6spBstawf84lJY5Wr8PcpNMGN9n41msOnkW03Vy5Gke7hxkUvFEfjxKLL6gTKHzigY8hrdLZqOKRyEmpR5cIeMuk-vqw/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://ucaae7e615335acf287833b55c3f.dl.dropboxusercontent.com/cd/0/get/DKGQ8lGCIUFUiuyEcXbt5jb7KQ-MAYIhqul5yP_fARaUCT5GOZheGUjWCH6WoO6v37qEr3Q6i9ttM0PiSddezc9EE5aOYxZ6a81S-uIKb9apjfusfin4cLJ1Fzto1gMXYKljGCVIg5T-VkoUzgoHhBwj-MhVKO__ExOPm1uSTCNOLA/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1770,7 +1770,7 @@ jobs:
           main = main_path.read_text()
           old_day_line = '    _day_time = fposmod(float(saved.get("day_time", 1000.0)), 24000.0)'
           bright_day_line = '    _day_time = fposmod(float(saved.get("day_time", 6000.0)), 24000.0)'
-          startup_end = main.find("\\nfunc _is_night_time")
+          startup_end = main.find("func _is_night_time")
           if startup_end < 0:
               raise SystemExit("Main startup boundary for day default was not found")
           startup = main[:startup_end]
