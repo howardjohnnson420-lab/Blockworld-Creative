@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://ucfedf2b6f8ba301b46655f20768.dl.dropboxusercontent.com/cd/0/get/DKFQ950GDTc30DvGoY2NNxd7RCvTt51k52NLXKw5jaSm0lG-LsGkv2jPWUbA0xpNfssiFb4WHooav7JiPbx_QPufkhs7tN6K26P2GdFQt3N6Zt4PUPf1XhQivqk8zfwCZSloO6bxUWnfIEAYb2AeGI2Mbrtm8An-_i0Rl1rs8Kbybw/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uc7e088fe69269752222afad3bd5.dl.dropboxusercontent.com/cd/0/get/DKE4rzuhljN-57ay8NRrHUsu2wieB0sa04nhLqmLNMyCEOuCfcBf2ADejcCrCzn9lJdo8kjv0QxHZC9mTlKG4-0o7LLm0CwSuJapDYLrljpeHuPUG4xxM8QiCV8rU-epXornMEJJFslxVX5uUIZVLf2K5i0QcxlH4EyHCSLLKzzM_A/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -809,7 +809,6 @@ jobs:
               settings = settings.replace('window/stretch/mode="canvas_items"', 'window/stretch/mode="canvas_items"\nwindow/stretch/aspect="expand"')
           project_settings.write_text(settings)
           PY
-
       - name: Fix vertical atlas UVs and cull internal fluid faces
         shell: bash
         run: |
@@ -932,7 +931,6 @@ jobs:
           version_path.write_text("0.5.8\n")
           print("Applied upright vertical UV mapping and same-fluid internal-face culling.")
           PY
-
       - name: Correct face winding and optimize chunk generation
         shell: bash
         run: |
@@ -1106,7 +1104,360 @@ jobs:
           (project / "VERSION.txt").write_text("0.5.9\n")
           print(f"Fixed {changed} quad index sites and optimized repeated base-block/light-source work.")
           PY
+      - name: Switch Android to Compatibility renderer and improve mobile UI/performance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$PROJECT_DIR" <<'PY'
+          from pathlib import Path
+          import re, sys
 
+          project = Path(sys.argv[1])
+
+          # Confirmed Godot bug #115217/#123370: horizontal raster lines/flicker on
+          # some Android Vulkan Mobile GPU/driver combinations. GL Compatibility
+          # uses OpenGL ES, avoiding the affected Vulkan Mobile path altogether.
+          settings_path = project / "project.godot"
+          settings = settings_path.read_text()
+
+          def set_godot_setting(text, section, key, value):
+              header = "[" + section + "]"
+              if header not in text:
+                  text = text.rstrip() + "\n\n" + header + "\n" + key + "=" + value + "\n"
+                  return text
+              start = text.index(header)
+              end = re.search(r"(?m)^\[.+\]\s*$", text[start + len(header):])
+              end_at = start + len(header) + end.start() if end else len(text)
+              block = text[start:end_at]
+              pattern = re.compile(r"(?m)^" + re.escape(key) + r"\s*=.*$")
+              if pattern.search(block):
+                  block = pattern.sub(key + "=" + value, block, count=1)
+              else:
+                  block = block.rstrip() + "\n" + key + "=" + value + "\n"
+              return text[:start] + block + text[end_at:]
+
+          settings = set_godot_setting(settings, "rendering", "renderer/rendering_method", '"gl_compatibility"')
+          settings = set_godot_setting(settings, "rendering", "renderer/rendering_method.mobile", '"gl_compatibility"')
+          settings = set_godot_setting(settings, "application", "config/version", '"0.6.0"')
+          settings_path.write_text(settings)
+          (project / "VERSION.txt").write_text("0.6.0\n")
+
+          # Raise Android's version code so the new candidate is not mistaken for the old APK.
+          preset_path = project / "export_presets.cfg"
+          preset = preset_path.read_text()
+          version_code = re.search(r"(?m)^version/code=(\d+)$", preset)
+          if version_code:
+              preset = preset[:version_code.start(1)] + str(int(version_code.group(1)) + 1) + preset[version_code.end(1):]
+          preset = re.sub(r'(?m)^version/name=.*
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0"
+
+      - name: Install Python texture-generation dependency
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore deterministic texture files in the build workspace
+        run: |
+          python -m pip install --disable-pip-version-check Pillow
+          python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
+
+      - name: Download Godot 4.7.2 and matching Android export templates
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"             --output "$RUNNER_TEMP/godot.zip"
+          mkdir -p "$RUNNER_TEMP/godot"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"             --output "$RUNNER_TEMP/godot-templates.tpz"
+          mkdir -p "$RUNNER_TEMP/templates" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/templates"
+          if [ -d "$RUNNER_TEMP/templates/templates" ]; then
+            cp -a "$RUNNER_TEMP/templates/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          else
+            cp -a "$RUNNER_TEMP/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          fi
+          printf '4.7.2.stable' > "$HOME/.local/share/godot/export_templates/4.7.2.stable/version.txt"
+          "$GODOT_BIN" --version
+
+      - name: Configure Godot Android SDK paths
+        run: |
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          EOF
+
+      - name: Import and export Android debug APK
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --import --quit 2>&1 | tee "$RUNNER_TEMP/godot-import.log"
+          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-import.log"; then
+            echo "GDScript errors found during import; refusing to publish a broken APK."
+            exit 1
+          fi
+          echo "Running a headless main-scene startup smoke test..."
+          timeout 120s "$GODOT_BIN" --headless --path "$PROJECT_DIR" --quit-after 3 2>&1 | tee "$RUNNER_TEMP/godot-runtime.log"
+          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-runtime.log"; then
+            echo "Runtime startup errors detected; refusing to publish this APK."
+            exit 1
+          fi
+          if ! grep -q "Flatworld startup: touch HUD created" "$RUNNER_TEMP/godot-runtime.log"; then
+            echo "The main scene did not finish creating the player and touch HUD."
+            exit 1
+          fi
+          if ! grep -q "Flatworld spawn invariant:" "$RUNNER_TEMP/godot-runtime.log"; then
+            echo "Spawn surface invariant was not logged."
+            exit 1
+          fi
+          # Render a real frame with Mesa software OpenGL in CI, save it for inspection,
+          # and reject a black/empty framebuffer. This tests the chosen Compatibility renderer,
+          # whereas the headless test above only validates gameplay startup and scripts.
+          mkdir -p "$RUNNER_TEMP/visual" "$GITHUB_WORKSPACE/visual-artifacts"
+          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb ffmpeg
+          fi
+          timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 50 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
+          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-visual.log"; then
+            echo "Graphical Compatibility startup reported a Godot error."
+            exit 1
+          fi
+          if ! grep -Eqi "OpenGL API|OpenGL ES" "$RUNNER_TEMP/godot-visual.log"; then
+            echo "Graphical smoke test did not report OpenGL/Compatibility."
+            exit 1
+          fi
+          test -s "$RUNNER_TEMP/visual/compatibility-smoke.avi"
+          ffmpeg -y -loglevel error -ss 3 -i "$RUNNER_TEMP/visual/compatibility-smoke.avi" -frames:v 1 "$RUNNER_TEMP/visual/compatibility-smoke.png"
+          test -s "$RUNNER_TEMP/visual/compatibility-smoke.png"
+          python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" <<'PY'
+          from PIL import Image, ImageStat
+          import sys
+          image = Image.open(sys.argv[1]).convert("RGB")
+          stats = ImageStat.Stat(image)
+          mean = sum(stats.mean) / 3.0
+          variance = sum(stats.stddev) / 3.0
+          visible_ratio = sum(1 for r, g, b in image.getdata() if max(r, g, b) > 24) / (image.width * image.height)
+          print(f"Compatibility frame stats: mean_rgb={mean:.2f}, channel_stddev={variance:.2f}, non_dark={visible_ratio:.1%}")
+          if mean < 18.0 or variance < 8.0 or visible_ratio < 0.10:
+              raise SystemExit("Rendered frame is blank/near-black; refusing to publish.")
+          PY
+          cp "$RUNNER_TEMP/visual/compatibility-smoke.png" "$GITHUB_WORKSPACE/visual-artifacts/compatibility-smoke.png"
+          cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
+          echo "Headless startup smoke test passed."
+          mkdir -p "$PROJECT_DIR/build"
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-debug.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
+          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-export.log"; then
+            echo "GDScript errors found during export; refusing to publish a broken APK."
+            exit 1
+          fi
+          test -s "$PROJECT_DIR/build/Flatworld-Creative-debug.apk"
+          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-debug.apk"
+          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.0-Source.zip" <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          import sys
+          project = Path(sys.argv[1])
+          output = Path(sys.argv[2])
+          with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=6) as archive:
+              for path in project.rglob("*"):
+                  if not path.is_file():
+                      continue
+                  relative = path.relative_to(project)
+                  if ".godot" in relative.parts or "build" in relative.parts:
+                      continue
+                  archive.write(path, Path(project.name) / relative)
+          print(f"Packaged matching source project ({output.stat().st_size} bytes).")
+          PY
+
+      - name: Publish the patched source project
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flatworld-Creative-0.6.0-Source
+          path: Flatworld-Creative-0.6.0-Source.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish graphical Compatibility smoke test
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flatworld-Creative-0.6.0-Visual-Smoke
+          path: visual-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish the APK as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flatworld-Creative-debug-APK
+          path: ${{ env.PROJECT_DIR }}/build/Flatworld-Creative-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+, 'version/name="0.6.0"', preset, count=1)
+          preset_path.write_text(preset)
+
+          # Dictionary.get(key, expensive_terrain_call()) eagerly evaluates the call in
+          # GDScript. Avoid recomputing terrain-noise heights when the cache already has
+          # the column, both in base block queries and surface queries.
+          world_path = project / "scripts/world.gd"
+          world = world_path.read_text()
+          old_height = "    var terrain_height := int(surface_heights.get(Vector2i(cell.x, cell.z), _terrain_height_at(cell.x, cell.z)))"
+          new_height = """    var terrain_column := Vector2i(cell.x, cell.z)
+              var terrain_height: int
+              if surface_heights.has(terrain_column):
+                  terrain_height = int(surface_heights[terrain_column])
+              else:
+                  terrain_height = _terrain_height_at(cell.x, cell.z)"""
+          if world.count(old_height) == 1:
+              world = world.replace(old_height, new_height, 1)
+              print("Fixed eager terrain-height fallback evaluation in base block lookup.")
+          else:
+              print("Base block height lookup pattern absent/already optimized; no change required.")
+          old_surface = "    var surface := int(surface_heights.get(column, _terrain_height_at(x, z)))"
+          new_surface = """    var surface: int
+              if surface_heights.has(column):
+                  surface = int(surface_heights[column])
+              else:
+                  surface = _terrain_height_at(x, z)"""
+          if world.count(old_surface) == 1:
+              world = world.replace(old_surface, new_surface, 1)
+              print("Fixed eager terrain-height fallback evaluation in surface query.")
+          world_path.write_text(world)
+
+          # Daylight visual changes do not need to rewrite Environment/SkyMaterial at
+          # display refresh rates. Keep the day clock continuous, refresh sky/light at 10 Hz.
+          main_path = project / "scripts/main.gd"
+          main = main_path.read_text()
+          process_start = main.find("func _process(delta: float) -> void:")
+          process_end = main.find("\nfunc ", process_start + 1) if process_start >= 0 else -1
+          if process_start >= 0 and process_end > process_start:
+              process_func = main[process_start:process_end]
+              if "_update_daylight()" in process_func and "_mobile_daylight_accumulator" not in main:
+                  first_line_end = main.find("\n")
+                  main = main[:first_line_end + 1] + "var _mobile_daylight_accumulator: float = 0.0\n" + main[first_line_end + 1:]
+                  process_start = main.find("func _process(delta: float) -> void:")
+                  process_end = main.find("\nfunc ", process_start + 1)
+                  process_func = main[process_start:process_end]
+                  process_func = process_func.replace(
+                      "    _update_daylight()",
+                      "    _mobile_daylight_accumulator += delta\n"
+                      "    if _mobile_daylight_accumulator >= 0.1:\n"
+                      "        _mobile_daylight_accumulator = 0.0\n"
+                      "        _update_daylight()",
+                      1,
+                  )
+                  main = main[:process_start] + process_func + main[process_end:]
+                  print("Throttled environment/sky updates to 10 Hz.")
+              else:
+                  print("Daylight refresh already throttled or not a per-frame call.")
+          else:
+              print("No standalone Main._process found; daylight update was not patched.")
+          main_path.write_text(main)
+
+          # Stop a per-frame HUD call from allocating/style-applying four StyleBoxFlat
+          # resources every frame. Re-style only when sprint toggles.
+          hud_path = project / "scripts/mobile_hud.gd"
+          hud = hud_path.read_text()
+          def replace_function(source, signature, body):
+              start = source.find(signature)
+              if start < 0:
+                  return source, False
+              end = source.find("\nfunc ", start + len(signature))
+              if end < 0:
+                  return source, False
+              return source[:start] + body.rstrip() + "\n\n" + source[end + 1:], True
+
+          sprint_body = """func set_sprint_text(enabled: bool) -> void:
+              var sprint_btn := root.get_node_or_null("SprintButton") as Button
+              if sprint_btn == null:
+                  _sprint_enabled = enabled
+                  return
+              if enabled == _sprint_enabled:
+                  return
+              _sprint_enabled = enabled
+              sprint_btn.text = "»"
+              sprint_btn.tooltip_text = "Toggle sprint"
+              sprint_btn.modulate = Color(1, 1, 1, 1)
+              _apply_mobile_button_style(sprint_btn, enabled, true)
+          """
+          hud, sprint_changed = replace_function(hud, "func set_sprint_text(enabled: bool) -> void:", sprint_body)
+          print("Disabled redundant per-frame sprint restyling." if sprint_changed else "Sprint setter not found; left unchanged.")
+
+          # Keep the hotbar and action controls but match the usual Minecraft layout:
+          # health/hunger indicators immediately above the centered hotbar, symbols
+          # instead of rectangular debug-style HIT/USE labels.
+          for old, new in [
+              ('_make_button("HIT", "BreakButton"', '_make_button("⛏", "BreakButton"'),
+              ('_make_button("USE", "PlaceButton"', '_make_button("▣", "PlaceButton"'),
+          ]:
+              if old in hud:
+                  hud = hud.replace(old, new, 1)
+          hud = hud.replace("Color(0.075, 0.09, 0.11, 0.55)", "Color(0.055, 0.065, 0.078, 0.38)", 1)
+          hud = hud.replace("Color(0.84, 0.88, 0.9, 0.50)", "Color(0.86, 0.89, 0.92, 0.36)", 1)
+
+          # Center health/hunger over the hotbar rather than pinning it to the top-right.
+          old_health_layout = """    health_label.anchor_left = 1.0
+              health_label.anchor_right = 1.0
+              health_label.anchor_top = 0.0
+              health_label.anchor_bottom = 0.0
+              health_label.offset_left = -290.0
+              health_label.offset_right = -122.0
+              health_label.offset_top = 34.0
+              health_label.offset_bottom = 57.0
+              health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT"""
+          new_health_layout = """    health_label.anchor_left = 0.5
+              health_label.anchor_right = 0.5
+              health_label.anchor_top = 1.0
+              health_label.anchor_bottom = 1.0
+              health_label.offset_left = -175.0
+              health_label.offset_right = 175.0
+              health_label.offset_top = -88.0
+              health_label.offset_bottom = -62.0
+              health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER"""
+          if hud.count(old_health_layout) == 1:
+              hud = hud.replace(old_health_layout, new_health_layout, 1)
+
+          old_adapt = """if health_label != null:
+                  health_label.offset_left = -290.0 * scale
+                  health_label.offset_right = -122.0 * scale
+                  health_label.offset_top = 33.0 * scale
+                  health_label.offset_bottom = 56.0 * scale
+                  health_label.add_theme_font_size_override("font_size", maxi(10, roundi(16.0 * scale)))"""
+          new_adapt = """if health_label != null:
+                  health_label.anchor_left = 0.5
+                  health_label.anchor_right = 0.5
+                  health_label.anchor_top = 1.0
+                  health_label.anchor_bottom = 1.0
+                  health_label.offset_left = -175.0 * scale
+                  health_label.offset_right = 175.0 * scale
+                  health_label.offset_top = -88.0 * scale
+                  health_label.offset_bottom = -62.0 * scale
+                  health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+                  health_label.add_theme_font_size_override("font_size", maxi(11, roundi(17.0 * scale)))"""
+          if old_adapt in hud:
+              hud = hud.replace(old_adapt, new_adapt, 1)
+          hud_path.write_text(hud)
+
+          final_settings = settings_path.read_text()
+          if 'renderer/rendering_method="gl_compatibility"' not in final_settings or 'renderer/rendering_method.mobile="gl_compatibility"' not in final_settings:
+              raise SystemExit("Compatibility rendering settings were not saved")
+          print("Configured GL Compatibility, safe hot-path changes, and Minecraft-style HUD polish.")
+          PY
       - name: Set up Java for Godot Android export
         uses: actions/setup-java@v4
         with:
@@ -1161,796 +1512,16 @@ jobs:
           export/android/java_sdk_path = "$JAVA_HOME"
           EOF
 
-      - name: Switch Android to Compatibility renderer and optimize voxel chunks
-        shell: bash
+      - name: Import and export Android debug APK
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          python3 - "$PROJECT_DIR" <<'PY'
-          from pathlib import Path
-          import re
-          import sys
-
-          project = Path(sys.argv[1])
-
-          # Godot issue #115217 documents horizontal 3D corruption on some Android
-          # Mobile/Vulkan driver combinations. Compatibility/OpenGL ES is a documented workaround.
-          settings_path = project / "project.godot"
-          settings = settings_path.read_text()
-          for key in ('renderer/rendering_method', 'renderer/rendering_method.mobile'):
-              pattern = re.compile(r'^' + re.escape(key) + r'=.*$', re.MULTILINE)
-              if not pattern.search(settings):
-                  raise SystemExit("Renderer setting missing: " + key)
-              settings = pattern.sub(key + '="gl_compatibility"', settings, count=1)
-          settings = re.sub(r'^config/version=.*$', 'config/version="0.6.4"', settings, count=1, flags=re.MULTILINE)
-          settings_path.write_text(settings)
-          (project / "VERSION.txt").write_text("0.6.4\n")
-
-          preset_path = project / "export_presets.cfg"
-          preset = preset_path.read_text()
-          preset = re.sub(r'^version/code=.*$', 'version/code=604', preset, count=1, flags=re.MULTILINE)
-          preset = re.sub(r'^version/name=.*$', 'version/name="0.6.4"', preset, count=1, flags=re.MULTILINE)
-          preset_path.write_text(preset)
-
-          # Local chunk-space mesh coordinates reduce floating-point precision loss:
-          # the per-chunk Node3D now carries the world origin, and vertices stay near 0..16.
-          world_path = project / "scripts/world.gd"
-          world = world_path.read_text()
-          # Restore the correct outward-facing index order. FACE_CORNERS is already
-          # ordered outward for each face; reversing indices made normals point inward,
-          # so CULL_BACK discarded the surfaces the player should see.
-          # Restore the correct outward-facing index order. FACE_CORNERS is already
-          # ordered outward; reversing its index order caused front faces to be culled.
-          winding_pattern = re.compile(
-              r"PackedInt32Array\(\[\s*base_index\s*,\s*base_index\s*\+\s*2\s*,\s*base_index\s*\+\s*1\s*,\s*base_index\s*,\s*base_index\s*\+\s*3\s*,\s*base_index\s*\+\s*2\s*\]\)"
-          )
-          preserved_faces = len(winding_pattern.findall(world))
-          if preserved_faces < 5:
-              raise SystemExit(f"Expected reversed outward-facing index order at all mesh sites; found {preserved_faces}")
-          print(f"Preserved the validated mesh winding at {preserved_faces} quad-index sites.")
-
-          chunk_root_marker = '    chunk_root.name = "Chunk_%d_%d" % [coord.x, coord.y]'
-          if world.count(chunk_root_marker) != 1:
-              raise SystemExit("Chunk-root creation marker missing")
-          if "chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE)" not in world:
-              world = world.replace(
-                  chunk_root_marker,
-                  chunk_root_marker + "\n"
-                  "    chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE), 0.0, float(coord.y * CHUNK_SIZE))",
-                  1
-              )
-
-          mesh_start = world.find("func _rebuild_chunk_mesh(chunk_coord: Vector2i) -> void:")
-          mesh_end = world.find("\nfunc _fluid_surface_height", mesh_start)
-          if mesh_start < 0 or mesh_end < 0:
-              raise SystemExit("Chunk mesh builder boundaries missing")
-          mesh_func = world[mesh_start:mesh_end]
-          arrays_marker = "    if vertices.is_empty():"
-          if "var chunk_mesh_origin := Vector3(" not in mesh_func:
-              if mesh_func.count(arrays_marker) != 1:
-                  raise SystemExit("Mesh array finalization marker missing")
-              localize = (
-                  "    var chunk_mesh_origin := Vector3(float(chunk_coord.x * CHUNK_SIZE), 0.0, float(chunk_coord.y * CHUNK_SIZE))\n"
-                  "    for vertex_index in range(vertices.size()):\n"
-                  "        vertices[vertex_index] = vertices[vertex_index] - chunk_mesh_origin\n"
-                  "    for face_vertex_index in range(collision_faces.size()):\n"
-                  "        collision_faces[face_vertex_index] = collision_faces[face_vertex_index] - chunk_mesh_origin\n"
-              )
-              mesh_func = mesh_func.replace(arrays_marker, localize + arrays_marker, 1)
-              world = world[:mesh_start] + mesh_func + world[mesh_end:]
-
-          # Coalesce neighbour mesh/collision rebuilds during streaming. Rebuilding a
-          # ConcavePolygonShape3D for each neighbour every time a chunk arrives is costly.
-          if "var _stream_dirty_mesh_chunks: Dictionary" not in world:
-              field_anchor = "var _generation_base_cache_active := false"
-              if world.count(field_anchor) != 1:
-                  raise SystemExit("Streaming dirty-chunk field anchor missing")
-              world = world.replace(field_anchor, field_anchor + "\nvar _stream_dirty_mesh_chunks: Dictionary = {}", 1)
-          process_start = world.find("func _process(delta: float) -> void:")
-          process_end = world.find("\nfunc generate_world", process_start)
-          if process_start < 0 or process_end < 0:
-              raise SystemExit("World process method boundaries missing")
-          process_func = world[process_start:process_end]
-          old_load = (
-              "            _load_chunk(coord)\n"
-              "            _refresh_chunk_and_neighbours(coord)\n"
-              "            generated_this_frame += 1"
-          )
-          new_load = (
-              "            _load_chunk(coord)\n"
-              "            _rebuild_chunk_mesh(coord)\n"
-              "            for offset in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:\n"
-              "                var affected_coord: Vector2i = coord + offset\n"
-              "                if chunk_nodes.has(affected_coord):\n"
-              "                    _stream_dirty_mesh_chunks[affected_coord] = true\n"
-              "            generated_this_frame += 1"
-          )
-          if process_func.count(old_load) != 1:
-              raise SystemExit("Chunk streaming rebuild block not found exactly once")
-          process_func = process_func.replace(old_load, new_load, 1)
-          flush_anchor = "            generated_this_frame += 1"
-          flush = (
-              "\n"
-              "    if not _stream_dirty_mesh_chunks.is_empty():\n"
-              "        var dirty_keys := _stream_dirty_mesh_chunks.keys()\n"
-              "        var dirty_coord: Vector2i = dirty_keys[0]\n"
-              "        _stream_dirty_mesh_chunks.erase(dirty_coord)\n"
-              "        if chunk_nodes.has(dirty_coord):\n"
-              "            _rebuild_chunk_mesh(dirty_coord)"
-          )
-          if process_func.count(flush_anchor) != 1:
-              raise SystemExit("Deferred remesh flush marker missing")
-          process_func = process_func.replace(flush_anchor, flush, 1)
-          world = world[:process_start] + process_func + world[process_end:]
-
-          # Dictionary.get(key, expensive_call()) evaluates expensive_call() even if key exists.
-          eager_height = "    var terrain_height := int(surface_heights.get(Vector2i(cell.x, cell.z), _terrain_height_at(cell.x, cell.z)))"
-          lazy_height = (
-              "    var terrain_key := Vector2i(cell.x, cell.z)\n"
-              "    var terrain_height: int\n"
-              "    if surface_heights.has(terrain_key):\n"
-              "        terrain_height = int(surface_heights[terrain_key])\n"
-              "    else:\n"
-              "        terrain_height = _terrain_height_at(cell.x, cell.z)"
-          )
-          if eager_height in world:
-              world = world.replace(eager_height, lazy_height, 1)
-          elif "var terrain_key := Vector2i(cell.x, cell.z)" not in world:
-              raise SystemExit("Base-block eager terrain-height lookup not found")
-
-          # Expire transient states at 10 Hz instead of deep-copying them every render frame.
-          if "var _transient_tick_accumulator :=" not in world:
-              tick_anchor = "var _block_light_scan_accumulator := 0.0"
-              if world.count(tick_anchor) != 1:
-                  raise SystemExit("Transient-state timer insertion point missing")
-              world = world.replace(tick_anchor, tick_anchor + "\nvar _transient_tick_accumulator := 0.0", 1)
-          process_start = world.find("func _process(delta: float) -> void:")
-          process_end = world.find("\nfunc generate_world", process_start)
-          process_func = world[process_start:process_end]
-          tick_call = "    _tick_transient_states(delta)"
-          if tick_call in process_func:
-              process_func = process_func.replace(
-                  tick_call,
-                  "    _transient_tick_accumulator += delta\n"
-                  "    if _transient_tick_accumulator >= 0.1:\n"
-                  "        var transient_delta := _transient_tick_accumulator\n"
-                  "        _transient_tick_accumulator = 0.0\n"
-                  "        _tick_transient_states(transient_delta)",
-                  1,
-              )
-          elif "_transient_tick_accumulator >= 0.1" not in process_func:
-              raise SystemExit("Transient per-frame work marker missing")
-          world = world[:process_start] + process_func + world[process_end:]
-          # The regular gameplay get_block_id intentionally returns air for unloaded
-          # chunks. Using it for mesh occlusion makes a solid neighboring chunk look like
-          # air until it streams, so both sides emit coplanar faces and z-fight at seams.
-          # Use deterministic base-world data for a neighbor inside view distance.
-          mesh_helper = """func _mesh_neighbour_block_id(cell: Vector3i) -> String:
-              if cell.y < MIN_WORLD_Y or cell.y > MAX_WORLD_Y:
-                  return "air"
-              var cell_key := _cell_key(cell)
-              if modifications.has(cell_key):
-                  return str(modifications[cell_key])
-              if blocks.has(cell):
-                  return str(blocks[cell])
-              var neighbour_coord := _chunk_for_cell(cell)
-              if chunk_nodes.has(neighbour_coord) or _within_radius(neighbour_coord, streaming_center, _active_load_radius()):
-                  return _base_block_at(cell)
-              return "air"
-
-          """
-          if "func _mesh_neighbour_block_id(" not in world:
-              helper_anchor = "func _base_cell_has_visible_face("
-              helper_at = world.find(helper_anchor)
-              if helper_at < 0:
-                  raise SystemExit("Mesh-neighbour helper insertion anchor missing")
-              world = world[:helper_at] + mesh_helper + world[helper_at:]
-
-          mesh_start = world.find("func _rebuild_chunk_mesh(chunk_coord: Vector2i) -> void:")
-          mesh_end = world.find("\nfunc _fluid_surface_height", mesh_start)
-          if mesh_start < 0 or mesh_end < 0:
-              raise SystemExit("Mesh neighbor-culling function boundaries missing")
-          mesh_func = world[mesh_start:mesh_end]
-          old_cube_neighbor = "var neighbour_id := get_block_id(neighbour)"
-          if mesh_func.count(old_cube_neighbor) != 1:
-              raise SystemExit(f"Expected one cube-neighbour lookup, found {mesh_func.count(old_cube_neighbor)}")
-          mesh_func = mesh_func.replace(old_cube_neighbor, "var neighbour_id := _mesh_neighbour_block_id(neighbour)", 1)
-          # Cache deterministic base cells during one mesh build, including occlusion
-          # queries for non-materialized cells and not-yet-loaded adjacent chunks.
-          if "_generation_base_cache_active = true" not in mesh_func:
-              cache_start = "    var face_normals: Array[Vector3] ="
-              if mesh_func.count(cache_start) != 1:
-                  raise SystemExit("Mesh-build cache activation marker missing")
-              mesh_func = mesh_func.replace(
-                  cache_start,
-                  "    var was_generation_cache_active := _generation_base_cache_active\n"
-                  "    if not was_generation_cache_active:\n"
-                  "        _generation_base_cache.clear()\n"
-                  "        _generation_base_cache_active = true\n"
-                  + cache_start,
-                  1,
-              )
-              finish_anchor = "    if vertices.is_empty():"
-              if mesh_func.count(finish_anchor) != 1:
-                  raise SystemExit("Mesh-build cache cleanup marker missing")
-              mesh_func = mesh_func.replace(
-                  finish_anchor,
-                  "    if not was_generation_cache_active:\n"
-                  "        _generation_base_cache_active = false\n"
-                  "        _generation_base_cache.clear()\n"
-                  + finish_anchor,
-                  1,
-              )
-          world = world[:mesh_start] + mesh_func + world[mesh_end:]
-
-          shape_start = world.find("func _append_shaped_block_geometry(")
-          shape_end = world.find("\nfunc _fence_connects_to", shape_start)
-          if shape_start < 0 or shape_end < 0:
-              raise SystemExit("Shaped-block neighbor-culling boundaries missing")
-          shaped = world[shape_start:shape_end]
-          old_shape_neighbor = "neighbour_id = get_block_id(cell + DIRECTIONS[face_index])"
-          if shaped.count(old_shape_neighbor) != 1:
-              raise SystemExit(f"Expected one shaped neighbour lookup, found {shaped.count(old_shape_neighbor)}")
-          shaped = shaped.replace(old_shape_neighbor, "neighbour_id = _mesh_neighbour_block_id(cell + DIRECTIONS[face_index])", 1)
-          world = world[:shape_start] + shaped + world[shape_end:]
-
-          fence_start = world.find("func _fence_connects_to(cell: Vector3i, direction: Vector3i) -> bool:")
-          fence_end = world.find("\nfunc _box_face_is_internal", fence_start)
-          if fence_start >= 0 and fence_end > fence_start:
-              fence_func = world[fence_start:fence_end]
-              fence_func = fence_func.replace("var neighbour_id := get_block_id(neighbour_cell)", "var neighbour_id := _mesh_neighbour_block_id(neighbour_cell)", 1)
-              world = world[:fence_start] + fence_func + world[fence_end:]
-
-          # Avoid GDScript's eager evaluation of Dictionary.get defaults in a hot accessor.
-          surface_old = "    var surface := int(surface_heights.get(column, _terrain_height_at(x, z)))"
-          surface_new = """    var surface: int
-              if surface_heights.has(column):
-                  surface = int(surface_heights[column])
-              else:
-                  surface = _terrain_height_at(x, z)"""
-          if surface_old in world:
-              world = world.replace(surface_old, surface_new, 1)
-          elif "    var surface: int\n    if surface_heights.has(column):" not in world:
-              raise SystemExit("get_surface_y eager-default lookup not found")
-          
-          # Optimize procedural generation without removing any block/biome/cave feature:
-          # * Don't compute/cache the biome for every underground stone cell.
-          # * Pass the already-computed terrain height into cave-noise evaluation.
-          # * Cache BlockRegistry definitions and reuse the constant DIRECTIONS array.
-          old_biome = "    var biome := get_biome_at(cell.x, cell.z)\n    if cell.y > terrain_height:"
-          if world.count(old_biome) != 1:
-              raise SystemExit("Overworld biome lookup hot-path anchor missing")
-          world = world.replace(old_biome, "    if cell.y > terrain_height:", 1)
-          surface_layer_marker = "    if cell.y < terrain_height - 1:"
-          if world.count(surface_layer_marker) != 1:
-              raise SystemExit("Surface biome lookup insertion point missing")
-          world = world.replace(surface_layer_marker, "    var biome := get_biome_at(cell.x, cell.z)\n" + surface_layer_marker, 1)
-
-          replacements = [
-              ("if _is_cave_cell(cell):", "if _is_cave_cell(cell, terrain_height):"),
-              ("if cell.y < floor_height - 4 and _is_cave_cell(cell):", "if cell.y < floor_height - 4 and _is_cave_cell(cell, floor_height):"),
-              ("if cell.y < surface - 4 and _is_cave_cell(cell):", "if cell.y < surface - 4 and _is_cave_cell(cell, surface):"),
-              ("func _is_cave_cell(cell: Vector3i) -> bool:", "func _is_cave_cell(cell: Vector3i, terrain_height: int) -> bool:"),
-              ("if cell.y < MIN_WORLD_Y + 6 or cell.y > _terrain_height_at(cell.x, cell.z) - 5:", "if cell.y < MIN_WORLD_Y + 6 or cell.y > terrain_height - 5:"),
-          ]
-          for old, new in replacements:
-              count = world.count(old)
-              if count < 1:
-                  raise SystemExit("Cave/biome optimization anchor missing: " + old)
-              world = world.replace(old, new, 1)
-
-          if "var _render_block_definition_cache: Dictionary = {}" not in world:
-              field_anchor = "var _generation_base_cache_active := false"
-              if world.count(field_anchor) != 1:
-                  raise SystemExit("Block metadata cache member anchor missing")
-              world = world.replace(field_anchor, field_anchor + "\nvar _render_block_definition_cache: Dictionary = {}", 1)
-          if "func _cached_render_definition(block_id: String) -> Dictionary:" not in world:
-              helper = "\n".join([
-                  "func _cached_render_definition(block_id: String) -> Dictionary:",
-                  "    if not _render_block_definition_cache.has(block_id):",
-                  "        _render_block_definition_cache[block_id] = BlockRegistry.get_block(block_id)",
-                  "    return _render_block_definition_cache[block_id]",
-                  "",
-              ])
-              anchor = "func _base_cell_has_visible_face(cell: Vector3i, block_id: String) -> bool:"
-              if world.count(anchor) != 1:
-                  raise SystemExit("Visible-face helper anchor missing")
-              world = world.replace(anchor, helper + anchor, 1)
-          visible_start = world.find("func _base_cell_has_visible_face(cell: Vector3i, block_id: String) -> bool:")
-          visible_end = world.find("\nfunc _write_generated_block", visible_start)
-          if visible_start < 0 or visible_end < 0:
-              raise SystemExit("Visible-face helper boundaries missing for hot-path optimization")
-          visible = world[visible_start:visible_end]
-          visible = visible.replace("var definition := BlockRegistry.get_block(block_id)", "var definition := _cached_render_definition(block_id)", 1)
-          directions_line = "    var directions: Array[Vector3i] = [Vector3i.RIGHT, Vector3i.LEFT, Vector3i.UP, Vector3i.DOWN, Vector3i.BACK, Vector3i.FORWARD]\n"
-          if visible.count(directions_line) != 1:
-              raise SystemExit("Per-cell direction-array allocation not found exactly once")
-          visible = visible.replace(directions_line, "", 1).replace("for direction in directions:", "for direction in DIRECTIONS:", 1)
-          visible = visible.replace("var neighbour_def := BlockRegistry.get_block(neighbour_id)", "var neighbour_def := _cached_render_definition(neighbour_id)", 1)
-          world = world[:visible_start] + visible + world[visible_end:]
-
-          # Use a 3x3 resident chunk view at all targets; mobile already used this radius.
-          # This avoids silently benchmarking a 5x5 world on the Linux screenshot runner.
-          active_radius_start = world.find("func _active_load_radius() -> int:")
-          active_radius_end = world.find("\nfunc _active_unload_margin", active_radius_start)
-          if active_radius_start < 0 or active_radius_end < 0:
-              raise SystemExit("Active load radius boundaries missing")
-          world = world[:active_radius_start] + "func _active_load_radius() -> int:\n    return 1\n" + world[active_radius_end:]
-          within_old = "func _within_load_radius(coord: Vector2i, center: Vector2i) -> bool:\n    return _within_radius(coord, center, LOAD_RADIUS)"
-          within_new = "func _within_load_radius(coord: Vector2i, center: Vector2i) -> bool:\n    return _within_radius(coord, center, _active_load_radius())"
-          if within_old not in world:
-              raise SystemExit("Fixed-radius streaming helper anchor missing")
-          world = world.replace(within_old, within_new, 1)
-
-          # Chunk timings provide objective evidence of the synchronous loading spikes.
-          load_start = "func _load_chunk(coord: Vector2i) -> void:\n    if chunk_nodes.has(coord):\n        return"
-          load_timed = load_start + "\n    var _chunk_build_started_msec := Time.get_ticks_msec()"
-          if load_start in world and "CHUNK_LOAD_MS:" not in world:
-              world = world.replace(load_start, load_timed, 1)
-              completed_line = "    _generated_chunk_count += 1"
-              if world.count(completed_line) != 1:
-                  raise SystemExit("Chunk load timing completion marker missing")
-              world = world.replace(
-                  completed_line,
-                  completed_line + '\n    print("CHUNK_LOAD_MS:", coord, " ", Time.get_ticks_msec() - _chunk_build_started_msec)',
-                  1,
-              )
-
-          # Speed up world loading by materializing underground solids only when a
-          # generated cave cell exposes their faces. Previously every buried stone voxel
-          # computed its block/ore and checked all six neighbours, although almost none of
-          # those buried solids became render geometry. Mining still resolves deterministic
-          # block ID via _base_block_at(), so ore/cave behaviour is preserved.
-          load_start = world.find("func _load_chunk(coord: Vector2i) -> void:")
-          load_end = world.find("\nfunc _base_block_at", load_start)
-          if load_start < 0 or load_end < 0:
-              raise SystemExit("Chunk-load function boundaries missing for cave-wall fast path")
-          load_func = world[load_start:load_end]
-          loop_marker = "    for x in range(x_start, x_start + CHUNK_SIZE):"
-          first_loop = load_func.find(loop_marker)
-          second_loop = load_func.find(loop_marker, first_loop + len(loop_marker))
-          if first_loop < 0 or second_loop < 0:
-              raise SystemExit("Could not isolate the second chunk-load column loop")
-          finish_marker = "    _generation_base_cache_active = false"
-          finish_at = load_func.find(finish_marker, second_loop)
-          if finish_at < 0:
-              raise SystemExit("Chunk-load cache cleanup marker missing")
-          materialize_loop = "\n".join([
-              "    for x in range(x_start, x_start + CHUNK_SIZE):",
-              "        for z in range(z_start, z_start + CHUNK_SIZE):",
-              "            var terrain_height := int(surface_heights[Vector2i(x, z)])",
-              "            var top_y := terrain_height",
-              '            if dimension_id == "overworld" and terrain_height < SEA_LEVEL:',
-              "                top_y = SEA_LEVEL",
-              '            elif dimension_id == "nether":',
-              "                top_y = 127",
-              '            if dimension_id == "overworld":',
-              "                for y in range(MIN_WORLD_Y, top_y + 1):",
-              "                    var cell := Vector3i(x, y, z)",
-              "                    if y < terrain_height - 4 and y > MIN_WORLD_Y + 5:",
-              "                        if _is_cave_cell(cell, terrain_height):",
-              "                            for direction in DIRECTIONS:",
-              "                                var wall_cell := cell + direction",
-              "                                if _chunk_for_cell(wall_cell) != coord or blocks.has(wall_cell):",
-              "                                    continue",
-              "                                var wall_id := _base_block_at(wall_cell)",
-              '                                if wall_id != "air" and _base_cell_has_visible_face(wall_cell, wall_id):',
-              "                                    _write_generated_block(coord, wall_cell, wall_id)",
-              "                        continue",
-              "                    var block_id := _base_block_at(cell)",
-              '                    if block_id != "air" and _base_cell_has_visible_face(cell, block_id):',
-              "                        _write_generated_block(coord, cell, block_id)",
-              "            else:",
-              "                for y in range(MIN_WORLD_Y, top_y + 1):",
-              "                    var cell := Vector3i(x, y, z)",
-              "                    var block_id := _base_block_at(cell)",
-              '                    if block_id != "air" and _base_cell_has_visible_face(cell, block_id):',
-              "                        _write_generated_block(coord, cell, block_id)",
-              "",
-          ])
-          load_func = load_func[:second_loop] + materialize_loop + load_func[finish_at:]
-          world = world[:load_start] + load_func + world[load_end:]
-          if "if _is_cave_cell(cell, terrain_height):" not in world:
-              raise SystemExit("Cave-wall generation fast path assertion missing")
-
-          world_path.write_text(world)
-
-          # Ensure health/hunger rendering and pause positions are actually updated after resize.
-          settings = settings_path.read_text()
-          if 'renderer/rendering_method="gl_compatibility"' not in settings or 'renderer/rendering_method.mobile="gl_compatibility"' not in settings:
-              raise SystemExit("Compatibility renderer config lost during performance patch")
-          
-          world_path.write_text(world)
-
-          player_path = project / "scripts/player_controller.gd"
-          player = player_path.read_text()
-          fov_line = "    camera_node.fov = 70.0"
-          if fov_line not in player:
-              raise SystemExit("Camera setup marker missing")
-          if "camera_node.far = 192.0" not in player:
-              player = player.replace(
-                  fov_line,
-                  fov_line + "\n"
-                  "    camera_node.near = 0.08\n"
-                  "    camera_node.far = 192.0 if OS.has_feature(\"mobile\") else 512.0",
-                  1,
-              )
-          player_path.write_text(player)
-
-          # Pixel-edged grey controls, clear Minecraft-like action labels, centered pause.
-          hud_path = project / "scripts/mobile_hud.gd"
-          hud = hud_path.read_text()
-          style_start = hud.find("func _apply_mobile_button_style(")
-          style_end = hud.find("\nfunc _anchor_top_button", style_start)
-          if style_start < 0 or style_end < 0:
-              raise SystemExit("Mobile HUD styling function boundaries missing")
-          style = hud[style_start:style_end]
-          for old, new in [
-              ("Color(0.075, 0.09, 0.11, 0.55)", "Color(0.28, 0.30, 0.30, 0.52)"),
-              ("Color(0.84, 0.88, 0.9, 0.50)", "Color(0.03, 0.04, 0.04, 0.94)"),
-              ("Color(1.0, 0.91, 0.55, 0.98)", "Color(1.0, 0.82, 0.13, 1.0)"),
-              ("normal.set_corner_radius_all(40 if circular else 6)", "normal.set_corner_radius_all(32 if circular else 1)"),
-              ("Color(0.20, 0.24, 0.27, 0.72)", "Color(0.42, 0.44, 0.44, 0.75)"),
-              ("Color(0.32, 0.35, 0.36, 0.82)", "Color(0.56, 0.57, 0.57, 0.86)"),
-          ]:
-              style = style.replace(old, new, 1)
-          shadow_anchor = "    normal.content_margin_bottom = 2.0"
-          if shadow_anchor in style and "normal.shadow_size = 2" not in style:
-              style = style.replace(
-                  shadow_anchor,
-                  shadow_anchor + "\n"
-                  "    normal.shadow_color = Color(0.0, 0.0, 0.0, 0.55)\n"
-                  "    normal.shadow_size = 2\n"
-                  "    normal.shadow_offset = Vector2(0, 2)",
-                  1,
-              )
-          hud = hud[:style_start] + style + hud[style_end:]
-
-          top_start = hud.find("func _build_top_bar() -> void:")
-          top_end = hud.find("\nfunc _build_joystick", top_start)
-          if top_start < 0 or top_end < 0:
-              raise SystemExit("HUD top-bar boundaries missing")
-          top = hud[top_start:top_end]
-          # Leave pause at the top-right next to inventory, like Minecraft Bedrock.
-          hud = hud[:top_start] + top + hud[top_end:]
-          health_old_values = [
-              ("health_label.anchor_left = 1.0", "health_label.anchor_left = 0.5"),
-              ("health_label.anchor_right = 1.0", "health_label.anchor_right = 0.5"),
-              ("health_label.anchor_top = 0.0", "health_label.anchor_top = 1.0"),
-              ("health_label.anchor_bottom = 0.0", "health_label.anchor_bottom = 1.0"),
-              ("health_label.offset_left = -290.0", "health_label.offset_left = -175.0"),
-              ("health_label.offset_right = -122.0", "health_label.offset_right = 175.0"),
-              ("health_label.offset_top = 34.0", "health_label.offset_top = -88.0"),
-              ("health_label.offset_bottom = 57.0", "health_label.offset_bottom = -62.0"),
-              ("health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT", "health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER"),
-          ]
-          for old, new in health_old_values:
-              if old not in top:
-                  raise SystemExit("Missing health HUD layout marker: " + old)
-              top = top.replace(old, new, 1)
-          top_start = hud.find("func _build_top_bar() -> void:")
-          top_end = hud.find("\nfunc _build_joystick", top_start)
-          hud = hud[:top_start] + top + hud[top_end:]
-
-          layout_start = hud.find("func _adapt_layout() -> void:")
-          layout_end = hud.find("\nfunc show_message", layout_start)
-          if layout_start < 0 or layout_end < 0:
-              raise SystemExit("HUD adaptive-layout boundaries missing")
-          layout = hud[layout_start:layout_end]
-          # Preserve pause at top-right, adjacent to inventory.
-          layout = layout.replace("break_btn.offset_left = -100.0 * scale", "break_btn.offset_left = -96.0 * scale", 1)
-          layout = layout.replace("jump_btn.offset_left = -100.0 * scale", "jump_btn.offset_left = -94.0 * scale", 1)
-          layout = layout.replace("place_btn.offset_left = -190.0 * scale", "place_btn.offset_left = -186.0 * scale", 1)
-          hud = hud[:layout_start] + layout + hud[layout_end:]
-
-          for old, new in [
-              ('_make_button("HIT", "BreakButton", root, 82, 82, 16)', '_make_button("BREAK", "BreakButton", root, 78, 78, 11)'),
-              ('_make_button("USE", "PlaceButton", root, 70, 70, 14)', '_make_button("PLACE", "PlaceButton", root, 66, 66, 11)'),
-              ('_make_button("↑", "JumpButton", root, 82, 82, 28)', '_make_button("JUMP", "JumpButton", root, 76, 76, 11)'),
-              ('_make_button("⌄", "DescendButton", root, 64, 64, 24)', '_make_button("DOWN", "DescendButton", root, 60, 60, 10)'),
-              ('_make_button("»", "SprintButton", root, 46, 46, 22)', '_make_button("RUN", "SprintButton", root, 46, 46, 10)'),
-          ]:
-              hud = hud.replace(old, new, 1)
-          health_start = hud.find("func set_health(health: int, hunger: int) -> void:")
-          health_end = hud.find("\nfunc set_selected_block", health_start)
-          if health_start < 0 or health_end < 0:
-              raise SystemExit("Health HUD function boundaries missing")
-          health_fn = """func set_health(health: int, hunger: int) -> void:
-              if health_label == null:
-                  return
-              var hearts := ""
-              var food := ""
-              for i in range(10):
-                  var heart_units := health - i * 2
-                  hearts += "♥" if heart_units >= 2 else ("♡" if heart_units >= 0 else "♡")
-                  var food_units := hunger - i * 2
-                  food += "◆" if food_units >= 2 else ("◇" if food_units >= 0 else "◇")
-              health_label.text = hearts + "   " + food
-
-          """
-          hud = hud[:health_start] + health_fn + hud[health_end + 1:]
-
-          # Match Creative mode: show the hotbar without the Survival hearts/food row.
-          mode_start = hud.find("func set_mode_text(is_creative: bool) -> void:")
-          mode_end = hud.find("\nfunc set_inventory_state", mode_start)
-          if mode_start < 0 or mode_end < 0:
-              raise SystemExit("HUD mode function boundaries missing")
-          mode_fn = hud[mode_start:mode_end]
-          if "health_label.visible = not is_creative" not in mode_fn:
-              mode_fn = mode_fn.replace("    _creative_mode = is_creative", "    _creative_mode = is_creative\n    if health_label != null:\n        health_label.visible = not is_creative", 1)
-          hud = hud[:mode_start] + mode_fn + hud[mode_end:]
-
-          layout_start = hud.find("func _adapt_layout() -> void:")
-          layout_end = hud.find("\nfunc show_message", layout_start)
-          if layout_start < 0 or layout_end < 0:
-              raise SystemExit("HUD adaptive-layout boundaries missing")
-          layout = hud[layout_start:layout_end]
-          hstart = layout.find("    if health_label != null:")
-          hend = layout.find("    if status_label != null:", hstart)
-          if hstart < 0 or hend < 0:
-              raise SystemExit("Responsive health-label block boundaries missing")
-          health_layout = """    if health_label != null:
-                  health_label.anchor_left = 0.5
-                  health_label.anchor_right = 0.5
-                  health_label.anchor_top = 1.0
-                  health_label.anchor_bottom = 1.0
-                  health_label.offset_left = -175.0 * scale
-                  health_label.offset_right = 175.0 * scale
-                  health_label.offset_top = -88.0 * scale
-                  health_label.offset_bottom = -62.0 * scale
-                  health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-                  health_label.add_theme_font_size_override("font_size", maxi(10, roundi(17.0 * scale)))
-
-          """
-          layout = layout[:hstart] + health_layout + layout[hend:]
-          # Make the biome label a small secondary readout at top-left instead of competing with pause.
-          layout = layout.replace("biome_label.offset_left = -270.0 * scale", "biome_label.offset_left = 14.0 * scale", 1)
-          layout = layout.replace("biome_label.offset_right = -122.0 * scale", "biome_label.offset_right = 150.0 * scale", 1)
-          layout = layout.replace("biome_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT", "biome_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT", 1)
-          hud = hud[:layout_start] + layout + hud[layout_end:]
-
-          # Do not rebuild button StyleBox resources every frame; sprint status changes rarely.
-          if "var _sprint_style_enabled :=" not in hud:
-              sprint_anchor = "var _sprint_enabled := false"
-              if hud.count(sprint_anchor) != 1:
-                  raise SystemExit("Sprint-style cache member anchor missing")
-              hud = hud.replace(sprint_anchor, sprint_anchor + "\nvar _sprint_style_enabled := false", 1)
-          sprint_start = hud.find("func set_sprint_text(enabled: bool) -> void:")
-          sprint_end = hud.find("\nfunc ", sprint_start + 8)
-          if sprint_start < 0 or sprint_end < 0:
-              raise SystemExit("Sprint status function boundaries missing")
-          sprint_fn = """func set_sprint_text(enabled: bool) -> void:
-              _sprint_enabled = enabled
-              var sprint_btn := root.get_node_or_null("SprintButton") as Button
-              if sprint_btn == null:
-                  return
-              if _sprint_style_enabled == enabled:
-                  return
-              _sprint_style_enabled = enabled
-              sprint_btn.text = "RUN" if not enabled else "RUN ON"
-              sprint_btn.tooltip_text = "Toggle sprint"
-              sprint_btn.modulate = Color.WHITE
-              _apply_mobile_button_style(sprint_btn, enabled, true)
-
-          """
-          hud = hud[:sprint_start] + sprint_fn + hud[sprint_end + 1:]
-
-          hud_path.write_text(hud)
-
-          docs = project / "docs"
-          docs.mkdir(exist_ok=True)
-          (docs / "RENDERING_FIX_0.6.4.md").write_text(
-              "# Rendering and performance fix 0.6.4\n\n"
-              "Previous Android builds used Godot Mobile/Vulkan. Godot issue #115217 documents horizontal "
-              "3D corruption on some Android GPU/driver combinations; Compatibility/OpenGL ES is a documented "
-              "workaround. This build selects gl_compatibility for default and mobile rendering and runs a "
-              "graphical Compatibility smoke test on Mesa software OpenGL.\n\n"
-              "Performance changes: local-space chunk mesh/collision vertices, one deferred neighbour remesh "
-              "per frame, lazy terrain-height lookup, and transient state scans throttled to 10 Hz. No "
-              "block/entity definitions are removed.\n"
-          )
-
-          final_settings = settings_path.read_text()
-          if 'renderer/rendering_method="gl_compatibility"' not in final_settings:
-              raise SystemExit("Compatibility renderer selection was not persisted")
-          if 'renderer/rendering_method.mobile="gl_compatibility"' not in final_settings:
-              raise SystemExit("Mobile renderer selection was not persisted as Compatibility")
-          final_world = world_path.read_text()
-          if "chunk_mesh_origin" not in final_world or "chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE)" not in final_world:
-              raise SystemExit("Chunk-local-coordinate assertion failed")
-          if "func _mesh_neighbour_block_id(" not in final_world:
-              raise SystemExit("Deterministic chunk-neighbour mesh lookup missing")
-          if "var neighbour_id := _mesh_neighbour_block_id(neighbour)" not in final_world:
-              raise SystemExit("Cube mesh seam-culling lookup missing")
-          print("Compatibility renderer selected; seam faces culled from deterministic world data; per-frame CPU work reduced.")
-          PY
-      - name: Remove shadow and foliage streak sources; reduce frame-time overhead
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - "$PROJECT_DIR" <<'PY'
-          from pathlib import Path
-          import json, re, sys
-          from PIL import Image
-
-          project = Path(sys.argv[1])
-          settings_path = project / "project.godot"
-          settings = settings_path.read_text()
-          settings, count = re.subn(r'^config/version=.*
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - "$PROJECT_DIR/scripts/world.gd" "$PROJECT_DIR/scripts/main.gd" <<'PY'
-          from pathlib import Path
-          import sys
-
-          world_path = Path(sys.argv[1])
-          main_path = Path(sys.argv[2])
-          world = world_path.read_text()
-
-          # Spawn search only checked base terrain. Trees are generated after the spawn
-          # is selected, so a perfectly "safe" terrain column could become a trunk/leaf
-          # column and put the camera inside opaque geometry. Reject candidates whose
-          # deterministic vegetation pass would place a tree within the player's eye area.
-          safe_signature = "func _is_safe_spawn_column(x: int, z: int) -> bool:"
-          next_func = "\nfunc grow_poplar_sapling"
-          start = world.find(safe_signature)
-          end = world.find(next_func, start)
-          if start < 0 or end < 0:
-              raise SystemExit("Safe spawn helper boundaries missing")
-          safe_fn = world[start:end]
-          return_marker = "    return true"
-          if safe_fn.count(return_marker) != 1:
-              raise SystemExit("Safe spawn return marker count mismatch")
-          safe_fn = safe_fn.replace(
-              return_marker,
-              "    if _spawn_has_tree_clearance(x, z, ground_y):\n"
-              "        return true\n"
-              "    return false",
-              1,
-          )
-          helper = """func _spawn_has_tree_clearance(x: int, z: int, ground_y: int) -> bool:
-              # Replicate the seeded tree roll for nearby columns. A tree crown reaches
-              # the player eye-height from roughly ground+2 to ground+4.
-              for tree_x in range(x - 3, x + 4):
-                  for tree_z in range(z - 3, z + 4):
-                      var tree_ground := _terrain_height_at(tree_x, tree_z)
-                      if tree_ground <= SEA_LEVEL or absi(tree_ground - ground_y) > 3:
-                          continue
-                      var tree_biome := get_biome_at(tree_x, tree_z)
-                      if tree_biome in ["desert", "badlands"]:
-                          continue
-                      var rng := RandomNumberGenerator.new()
-                      rng.seed = int(seed_value + tree_x * 73856093 + tree_z * 19349663)
-                      var roll := rng.randi_range(0, 999)
-                      if tree_biome == "dappled_forest" and roll < 4:
-                          continue
-                      var chance := 27 if tree_biome in ["forest", "dappled_forest", "snowy"] else 8
-                      if roll < chance and maxi(absi(tree_x - x), absi(tree_z - z)) <= 2:
-                          var trunk_height := rng.randi_range(4, 6)
-                          var crown_bottom := tree_ground + trunk_height - 2
-                          var eye_y := ground_y + 2
-                          if crown_bottom <= eye_y and eye_y <= tree_ground + trunk_height + 1:
-                              return false
-              return true
-
-          """
-          world = world[:start] + helper + safe_fn + world[end:]
-          world_path.write_text(world)
-
-          # A new world starts in daylight, rather than at a dim sunrise with low
-          # ambient light. Saved-world time is left untouched.
-          main = main_path.read_text()
-          old_day_line = '    _day_time = fposmod(float(saved.get("day_time", 1000.0)), 24000.0)'
-          bright_day_line = '    _day_time = fposmod(float(saved.get("day_time", 6000.0)), 24000.0)'
-          startup_end = main.find("func _is_night_time")
-          if startup_end < 0:
-              raise SystemExit("Main startup boundary for day default was not found")
-          startup = main[:startup_end]
-          remainder = main[startup_end:]
-          if startup.count(old_day_line) == 1:
-              startup = startup.replace(old_day_line, bright_day_line, 1)
-          elif startup.count(bright_day_line) == 1:
-              pass
-          else:
-              raise SystemExit("Startup daylight default was not uniquely identifiable")
-          main = startup + remainder
-          main_path.write_text(main)
-          print("Added terrain+vegetation clearance and a bright new-world starting time.")
-          PY
-
-      - name: Prevent vegetation-obstructed spawn and assert visible world
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - "$PROJECT_DIR/scripts/world.gd" "$PROJECT_DIR/scripts/main.gd" <<'PY'
-          from pathlib import Path
-          import sys
-
-          world_path = Path(sys.argv[1])
-          main_path = Path(sys.argv[2])
-          world = world_path.read_text()
-
-          # Spawn search only checked base terrain. Trees are generated after the spawn
-          # is selected, so a perfectly "safe" terrain column could become a trunk/leaf
-          # column and put the camera inside opaque geometry. Reject candidates whose
-          # deterministic vegetation pass would place a tree within the player's eye area.
-          safe_signature = "func _is_safe_spawn_column(x: int, z: int) -> bool:"
-          next_func = "\nfunc grow_poplar_sapling"
-          start = world.find(safe_signature)
-          end = world.find(next_func, start)
-          if start < 0 or end < 0:
-              raise SystemExit("Safe spawn helper boundaries missing")
-          safe_fn = world[start:end]
-          return_marker = "    return true"
-          if safe_fn.count(return_marker) != 1:
-              raise SystemExit("Safe spawn return marker count mismatch")
-          safe_fn = safe_fn.replace(
-              return_marker,
-              "    if _spawn_has_tree_clearance(x, z, ground_y):\n"
-              "        return true\n"
-              "    return false",
-              1,
-          )
-          helper = """func _spawn_has_tree_clearance(x: int, z: int, ground_y: int) -> bool:
-              # Replicate the seeded tree roll for nearby columns. A tree crown reaches
-              # the player eye-height from roughly ground+2 to ground+4.
-              for tree_x in range(x - 3, x + 4):
-                  for tree_z in range(z - 3, z + 4):
-                      var tree_ground := _terrain_height_at(tree_x, tree_z)
-                      if tree_ground <= SEA_LEVEL or absi(tree_ground - ground_y) > 3:
-                          continue
-                      var tree_biome := get_biome_at(tree_x, tree_z)
-                      if tree_biome in ["desert", "badlands"]:
-                          continue
-                      var rng := RandomNumberGenerator.new()
-                      rng.seed = int(seed_value + tree_x * 73856093 + tree_z * 19349663)
-                      var roll := rng.randi_range(0, 999)
-                      if tree_biome == "dappled_forest" and roll < 4:
-                          continue
-                      var chance := 27 if tree_biome in ["forest", "dappled_forest", "snowy"] else 8
-                      if roll < chance and maxi(absi(tree_x - x), absi(tree_z - z)) <= 2:
-                          var trunk_height := rng.randi_range(4, 6)
-                          var crown_bottom := tree_ground + trunk_height - 2
-                          var eye_y := ground_y + 2
-                          if crown_bottom <= eye_y and eye_y <= tree_ground + trunk_height + 1:
-                              return false
-              return true
-
-          """
-          world = world[:start] + helper + safe_fn + world[end:]
-          world_path.write_text(world)
-
-          # A new world starts in daylight, rather than at a dim sunrise with low
-          # ambient light. Saved-world time is left untouched.
-          main = main_path.read_text()
-          old_day_line = '    _day_time = fposmod(float(saved.get("day_time", 1000.0)), 24000.0)'
-          bright_day_line = '    _day_time = fposmod(float(saved.get("day_time", 6000.0)), 24000.0)'
-          startup_end = main.find("func _is_night_time")
-          if startup_end < 0:
-              raise SystemExit("Main startup boundary for day default was not found")
-          startup = main[:startup_end]
-          remainder = main[startup_end:]
-          if startup.count(old_day_line) == 1:
-              startup = startup.replace(old_day_line, bright_day_line, 1)
-          elif startup.count(bright_day_line) == 1:
-              pass
-          else:
-              raise SystemExit("Startup daylight default was not uniquely identifiable")
-          main = startup + remainder
-          main_path.write_text(main)
-          print("Added terrain+vegetation clearance and a bright new-world starting time.")
-          PY
-
-      - name: Import, smoke-test Compatibility renderer, and export Android APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/visual" "$GITHUB_WORKSPACE/visual-artifacts"
-          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --import 2>&1 | tee "$RUNNER_TEMP/godot-import.log"
+          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --import --quit 2>&1 | tee "$RUNNER_TEMP/godot-import.log"
           if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-import.log"; then
             echo "GDScript errors found during import; refusing to publish a broken APK."
             exit 1
           fi
+          echo "Running a headless main-scene startup smoke test..."
           timeout 120s "$GODOT_BIN" --headless --path "$PROJECT_DIR" --quit-after 3 2>&1 | tee "$RUNNER_TEMP/godot-runtime.log"
           if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-runtime.log"; then
             echo "Runtime startup errors detected; refusing to publish this APK."
@@ -1964,110 +1535,20 @@ jobs:
             echo "Spawn surface invariant was not logged."
             exit 1
           fi
-          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq xvfb ffmpeg
-          fi
-          timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 40 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Graphical Compatibility startup reported an engine/script error."
-            exit 1
-          fi
-          if ! grep -Eqi "OpenGL API|OpenGL ES" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Visual test did not report an OpenGL renderer."
-            exit 1
-          fi
-          test -s "$RUNNER_TEMP/visual/compatibility-smoke.avi"
-          ffmpeg -y -loglevel error -ss 3 -i "$RUNNER_TEMP/visual/compatibility-smoke.avi" -frames:v 1 "$RUNNER_TEMP/visual/compatibility-smoke.png"
-          test -s "$RUNNER_TEMP/visual/compatibility-smoke.png"
-          python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" "$RUNNER_TEMP/godot-visual.log" <<'PY'
-          from PIL import Image
-          from pathlib import Path
-          import re, statistics, sys
-          image = Image.open(Path(sys.argv[1])).convert("RGB")
-          dark = 0
-          for box in [(20, 70, 420, 180), (1030, 100, 1140, 300)]:
-              crop = image.crop(box)
-              dark += sum(1 for rgb in crop.getdata() if max(rgb) < 60)
-          if dark > 4:
-              raise SystemExit(f"Visual regression: {dark} dark pixels in clear-sky regions (limit 4)")
-          log = Path(sys.argv[2]).read_text(errors="replace")
-          timings = [int(v) for v in re.findall(r"CHUNK_LOAD_MS:.*?(\d+)\s*$", log, re.MULTILINE)]
-          if not timings:
-              raise SystemExit("No chunk-load timing samples recorded")
-          print(f"Visual regression passed: dark_sky_pixels={dark}; chunk_load_median_ms={statistics.median(timings):.1f}; samples={timings}")
-          PY
-          python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" <<'PY'
-          from PIL import Image, ImageStat
-          import sys
-          image = Image.open(sys.argv[1]).convert("RGB")
-          mean = sum(ImageStat.Stat(image).mean) / 3.0
-          pixels = list(image.getdata())
-          visible_ratio = sum(1 for r, g, b in pixels if max(r, g, b) > 24) / len(pixels)
-          print(f"VISUAL_ASSERT: mean_rgb={mean:.2f}/255 pixels_over_24={visible_ratio:.1%}")
-          if mean < 18.0 or visible_ratio < 0.10:
-              raise SystemExit("Graphical smoke frame is effectively black; do not publish APK.")
-          PY
-          CHUNK_LOAD_COUNT="$(grep -c "CHUNK_LOAD_MS:" "$RUNNER_TEMP/godot-visual.log" || true)"
-          if [ "$CHUNK_LOAD_COUNT" -lt 9 ]; then
-            echo "The visual screenshot was taken before the full 3x3 resident chunk ring loaded (count=$CHUNK_LOAD_COUNT)."
-            exit 1
-          fi
-          python3 - "$RUNNER_TEMP/godot-visual.log" <<'PY'
-          import re, sys
-          times = [int(value) for value in re.findall(r"CHUNK_LOAD_MS:.*? (\d+)", open(sys.argv[1], encoding="utf-8").read())]
-          if len(times) < 9:
-              raise SystemExit(f"Only {len(times)} chunks loaded during visual smoke test")
-          print("Chunk generation timing ms: count=", len(times), "max=", max(times), "avg=", round(sum(times)/len(times), 1))
-          PY
-          cp "$RUNNER_TEMP/visual/compatibility-smoke.png" "$GITHUB_WORKSPACE/visual-artifacts/compatibility-smoke.png"
-          cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
-          echo "Headless startup and graphical Compatibility smoke tests passed."
+          echo "Headless startup smoke test passed."
           mkdir -p "$PROJECT_DIR/build"
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.4.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-debug.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
           if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-export.log"; then
             echo "GDScript errors found during export; refusing to publish a broken APK."
             exit 1
           fi
-          test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.4.apk"
-          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.4.apk"
-          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.4-Source.zip" <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile, ZIP_DEFLATED
-          import sys
-          project = Path(sys.argv[1])
-          output = Path(sys.argv[2])
-          with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=6) as archive:
-              for path in project.rglob("*"):
-                  if not path.is_file():
-                      continue
-                  relative = path.relative_to(project)
-                  if ".godot" in relative.parts or "build" in relative.parts:
-                      continue
-                  archive.write(path, Path(project.name) / relative)
-          print(f"Packaged matching source: {output.stat().st_size} bytes")
-          PY
+          test -s "$PROJECT_DIR/build/Flatworld-Creative-debug.apk"
+          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-debug.apk"
 
-      - name: Publish Android APK
+      - name: Publish the APK as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.4-Android
-          path: source/Flatworld_Creative_Godot/build/Flatworld-Creative-0.6.4.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish patched source project
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.4-Source
-          path: Flatworld-Creative-0.6.4-Source.zip
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish Compatibility-rendered screenshot and logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.4-Visual-Smoke
-          path: visual-artifacts/*
+          name: Flatworld-Creative-debug-APK
+          path: ${{ env.PROJECT_DIR }}/build/Flatworld-Creative-debug.apk
           if-no-files-found: error
           retention-days: 14
