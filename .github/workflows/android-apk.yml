@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc8e02c673a447db1972bd5619bc.dl.dropboxusercontent.com/cd/0/get/DKHb-yKWXafKPIS9f10h-ZZ9tf5fOQFwm5arP1FkS8s2I_JTlJ_YFGSjz6PmTyd1JeCgG9VrZz8LZpjbRCyv2ozAfJhvVzvObHtmChSt1xr4tGnbNmWLQ1fZ2YE27R6YNjT6gDWKseXKiGt27WxMo40HBUhXXCG0VXdzNSj3mmxyRw/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://ucf37ba9ccd21d92f8bfe525262c.dl.dropboxusercontent.com/cd/0/get/DKEodfHH5aTDyDRMambQbMpv5gneDxheKftTXckZ6RJ5pKA1aswpG7WB2UVjFhCKy4YUiAYJTdzaltlY6aOlQO9L8mlnSc0bDzCACfBC0mYxq4E-ky_9Q4hhSeA4D25I9_l3QSUYjW1oTYMNr3fi4pFIDgDaGeaosKJaRWVyYkgf2Q/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1763,7 +1763,6 @@ jobs:
               raise SystemExit("Cube mesh seam-culling lookup missing")
           print("Compatibility renderer selected; seam faces culled from deterministic world data; per-frame CPU work reduced.")
           PY
-
       - name: Remove shadow and foliage streak sources; reduce frame-time overhead
         shell: bash
         run: |
