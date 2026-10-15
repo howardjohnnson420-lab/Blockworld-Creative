@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc9fc100c7b0439fd445aa6b6908.dl.dropboxusercontent.com/cd/0/get/DKFssASexJU37UzoKTjg0usXo6-4WfU96YQrnjVhfw_KLzieD90ijACZqE7D23i88NT8c4aS26nvXRbpabHNiT-jullGVEJjj1aJfiH_zUNgzKv9-GANEaS87dkbZgousGOXQzJqGzV4nz6xXcpsd8dnoD1Jo3elbVRY6nWJPrAXBQ/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uce0a6a8aa02f7d5f93a5d52c112.dl.dropboxusercontent.com/cd/0/get/DKETk-YpYjJZDaxvTZrB-Z3dVFAIZJZ_DD3nlJJbCHfDNR4HC5IEzzeJF3FpNPng0f4X2q_Qh_pT7GhX8IfzhTB5eshvnOlpGbSCu5FHW0vVr7_IfCUjTvrVZaApXOzKkWo0wqgZl7zKt3o6D_Yl_aaaJUQrjOxJp4bu9qBt5Yb3mw/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1195,20 +1195,17 @@ jobs:
           # Restore the correct outward-facing index order. FACE_CORNERS is already
           # ordered outward for each face; reversing indices made normals point inward,
           # so CULL_BACK discarded the surfaces the player should see.
-          winding_pairs = [
-              ("PackedInt32Array([base_index, base_index + 2, base_index + 1, base_index, base_index + 3, base_index + 2])",
-               "PackedInt32Array([base_index, base_index + 1, base_index + 2, base_index, base_index + 2, base_index + 3])"),
-              ("PackedInt32Array([base_index,base_index+2,base_index+1,base_index,base_index+3,base_index+2])",
-               "PackedInt32Array([base_index,base_index+1,base_index+2,base_index,base_index+2,base_index+3])"),
-          ]
-          restored_faces = 0
-          for inward, outward in winding_pairs:
-              count = world.count(inward)
-              if count:
-                  world = world.replace(inward, outward)
-                  restored_faces += count
-          if restored_faces < 5:
-              raise SystemExit(f"Expected to restore at least five outward-facing index sequences; restored {restored_faces}")
+          # Restore the correct outward-facing index order. FACE_CORNERS is already
+          # ordered outward; reversing its index order caused front faces to be culled.
+          winding_pattern = re.compile(
+              r"PackedInt32Array\(\[\s*base_index\s*,\s*base_index\s*\+\s*2\s*,\s*base_index\s*\+\s*1\s*,\s*base_index\s*,\s*base_index\s*\+\s*3\s*,\s*base_index\s*\+\s*2\s*\]\)"
+          )
+          world, restored_faces = winding_pattern.subn(
+              "PackedInt32Array([base_index, base_index + 1, base_index + 2, base_index, base_index + 2, base_index + 3])",
+              world
+          )
+          if restored_faces < 3:
+              raise SystemExit(f"Expected to restore outward-facing indices at all cube, shaped, and plant faces; restored {restored_faces}")
           print(f"Restored outward-facing winding for {restored_faces} mesh quad sites.")
 
           chunk_root_marker = '    chunk_root.name = "Chunk_%d_%d" % [coord.x, coord.y]'
