@@ -854,35 +854,30 @@ jobs:
           shape_start = source.index(helper_anchor)
           shape_end = source.index('\nfunc _fence_connects_to', shape_start)
           shaped = source[shape_start:shape_end]
-          face_cull_anchor = '''                if neighbour_full and _box_face_fully_covers_cell_face(box_min, box_max, face_index):
-                      continue
-              var face_name := "side"'''
-          face_cull_new = '''                if neighbour_full and _box_face_fully_covers_cell_face(box_min, box_max, face_index):
-                      continue
-              var face_box_min := box_min
+          face_name_marker = '            var face_name := "side"'
+          fluid_face_block = '''            var face_box_min := box_min
               var face_box_max := box_max
               if shape_id == "fluid" and at_cell_boundary and neighbour_id == get_block_id(cell):
-                  # Shared horizontal planes within the same liquid are always hidden.
+                  # Shared horizontal planes within the same liquid are hidden to prevent
+                  # z-fighting and a huge redundant triangle count in oceans.
                   if face_index in [2, 3]:
                       continue
-                  # If adjacent fluid is lower, draw only the exposed strip above it.
                   var adjacent_height := _fluid_surface_height(cell + DIRECTIONS[face_index])
                   if adjacent_height >= box_max.y - 0.0001:
                       continue
                   face_box_min.y = maxf(box_min.y, adjacent_height)
                   if face_box_min.y >= face_box_max.y - 0.0001:
                       continue
-              var face_name := "side"'''
-          if shaped.count(face_cull_anchor) != 1:
-              raise SystemExit(f"Fluid cull insertion target count {shaped.count(face_cull_anchor)}")
-          shaped = shaped.replace(face_cull_anchor, face_cull_new, 1)
+          '''
+          if shaped.count(face_name_marker) != 1:
+              raise SystemExit(f"Face-name insertion target count {shaped.count(face_name_marker)}")
+          shaped = shaped.replace(face_name_marker, fluid_face_block + face_name_marker, 1)
 
           # The base face UVs must use a vertical flip for cuboid sides but not top/bottom.
-          old_shaped_uv = '''            var face_uvs: Array[Vector2] = [
-                  _tile_uv(tile_index, 0, 0), _tile_uv(tile_index, 0, 1),
-                  _tile_uv(tile_index, 1, 1), _tile_uv(tile_index, 1, 0)
-              ]
-              for corner_index in range(4):'''
+          uv_start = shaped.find("            var face_uvs: Array[Vector2] = [")
+          uv_end = shaped.find("            for corner_index in range(4):", uv_start)
+          if uv_start < 0 or uv_end < 0:
+              raise SystemExit("Shaped face UV section not found")
           new_shaped_uv = '''            var face_uvs: Array[Vector2]
               if face_index in [0, 1, 4, 5]:
                   face_uvs = [
@@ -894,10 +889,8 @@ jobs:
                       _tile_uv(tile_index, 0, 0), _tile_uv(tile_index, 0, 1),
                       _tile_uv(tile_index, 1, 1), _tile_uv(tile_index, 1, 0)
                   ]
-              for corner_index in range(4):'''
-          if shaped.count(old_shaped_uv) != 1:
-              raise SystemExit(f"Shaped UV target count {shaped.count(old_shaped_uv)}")
-          shaped = shaped.replace(old_shaped_uv, new_shaped_uv, 1)
+          '''
+          shaped = shaped[:uv_start] + new_shaped_uv + shaped[uv_end:]
           for a, b in [
               ("lerpf(box_min.x, box_max.x, unit_corner.x)", "lerpf(face_box_min.x, face_box_max.x, unit_corner.x)"),
               ("lerpf(box_min.y, box_max.y, unit_corner.y)", "lerpf(face_box_min.y, face_box_max.y, unit_corner.y)"),
@@ -913,19 +906,16 @@ jobs:
           plant_start = source.index('func _append_plant_geometry(')
           plant_end = source.index('\nfunc _tile_uv_pixel', plant_start)
           plant = source[plant_start:plant_end]
-          old_plant_uv = '''            var face_uvs: Array[Vector2] = [
-                      _tile_uv(tile_index, 0, 0), _tile_uv(tile_index, 0, 1),
-                      _tile_uv(tile_index, 1, 1), _tile_uv(tile_index, 1, 0)
-                  ]
-                  var normal := original_normal'''
+          plant_uv_start = plant.find("            var face_uvs: Array[Vector2] = [")
+          plant_uv_end = plant.find("                  var normal := original_normal", plant_uv_start)
+          if plant_uv_start < 0 or plant_uv_end < 0:
+              raise SystemExit("Plant face UV section not found")
           new_plant_uv = '''            var face_uvs: Array[Vector2] = [
                       _tile_uv(tile_index, 0, 1), _tile_uv(tile_index, 0, 0),
                       _tile_uv(tile_index, 1, 0), _tile_uv(tile_index, 1, 1)
                   ]
-                  var normal := original_normal'''
-          if plant.count(old_plant_uv) != 1:
-              raise SystemExit(f"Plant UV target count {plant.count(old_plant_uv)}")
-          plant = plant.replace(old_plant_uv, new_plant_uv, 1)
+          '''
+          plant = plant[:plant_uv_start] + new_plant_uv + plant[plant_uv_end:]
           source = source[:plant_start] + plant + source[plant_end:]
 
           world_path.write_text(source)
