@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc55cdb818f5946a634db1f52b9c.dl.dropboxusercontent.com/cd/0/get/DKHazQSNkAORe_-woElmMEKm364O1bTF0d7PDopF_EcJeO2OKmH2aT83yIxrq6hvmTbnB2UQMyEVmf2upd97BfdmAzhpywBjNA7CxgQLqhGIW0za3y2XxxRggY4JAdofdGwW5eLEJyGZnlQyII-JVFdslNdkFmf7I4MI9gk3eQOFiQ/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uc7b1339e22c2695c96307f792c6.dl.dropboxusercontent.com/cd/0/get/DKG5zV_--6BhDXAnFqv5J8N4OwhBpEm9mAGFqhKn6KNvpPCNkpyWtLWvPXxlAMUgaF-q0CS9Vv2sita6Pioru-qiWra95h0QBBVxS70XPDypZzkL7RaKxkWoElNrO6agEbuGwS9z47VcRatuUyp0iGn3Hhv-L4j_rU8ElS_tU9Z_SA/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1115,13 +1115,465 @@ jobs:
 
           project = Path(sys.argv[1])
 
-          # Evidence-led workaround: Godot issue #115217 documents Android horizontal
-          # line corruption on some Mobile/Vulkan GPU-driver combinations. Compatibility
-          # uses OpenGL ES and is the documented workaround.
+          # Godot issue #115217 documents horizontal 3D corruption on some Android
+          # Mobile/Vulkan driver combinations. Compatibility/OpenGL ES is a documented workaround.
           settings_path = project / "project.godot"
           settings = settings_path.read_text()
           for key in ('renderer/rendering_method', 'renderer/rendering_method.mobile'):
               pattern = re.compile(r'^' + re.escape(key) + r'=.*
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0"
+
+      - name: Install Python texture-generation dependency
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore deterministic texture files in the build workspace
+        run: |
+          python -m pip install --disable-pip-version-check Pillow
+          python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
+
+      - name: Download Godot 4.7.2 and matching Android export templates
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"             --output "$RUNNER_TEMP/godot.zip"
+          mkdir -p "$RUNNER_TEMP/godot"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"             --output "$RUNNER_TEMP/godot-templates.tpz"
+          mkdir -p "$RUNNER_TEMP/templates" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/templates"
+          if [ -d "$RUNNER_TEMP/templates/templates" ]; then
+            cp -a "$RUNNER_TEMP/templates/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          else
+            cp -a "$RUNNER_TEMP/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          fi
+          printf '4.7.2.stable' > "$HOME/.local/share/godot/export_templates/4.7.2.stable/version.txt"
+          "$GODOT_BIN" --version
+
+      - name: Configure Godot Android SDK paths
+        run: |
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          EOF
+
+, re.MULTILINE)
+              if not pattern.search(settings):
+                  raise SystemExit("Renderer setting missing: " + key)
+              settings = pattern.sub(key + '="gl_compatibility"', settings, count=1)
+          settings = re.sub(r'^config/version=.*
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0"
+
+      - name: Install Python texture-generation dependency
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore deterministic texture files in the build workspace
+        run: |
+          python -m pip install --disable-pip-version-check Pillow
+          python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
+
+      - name: Download Godot 4.7.2 and matching Android export templates
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"             --output "$RUNNER_TEMP/godot.zip"
+          mkdir -p "$RUNNER_TEMP/godot"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"             --output "$RUNNER_TEMP/godot-templates.tpz"
+          mkdir -p "$RUNNER_TEMP/templates" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/templates"
+          if [ -d "$RUNNER_TEMP/templates/templates" ]; then
+            cp -a "$RUNNER_TEMP/templates/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          else
+            cp -a "$RUNNER_TEMP/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          fi
+          printf '4.7.2.stable' > "$HOME/.local/share/godot/export_templates/4.7.2.stable/version.txt"
+          "$GODOT_BIN" --version
+
+      - name: Configure Godot Android SDK paths
+        run: |
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          EOF
+
+, 'config/version="0.6.0"', settings, count=1, flags=re.MULTILINE)
+          settings_path.write_text(settings)
+          (project / "VERSION.txt").write_text("0.6.0\n")
+
+          preset_path = project / "export_presets.cfg"
+          preset = preset_path.read_text()
+          preset = re.sub(r'^version/code=.*
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0"
+
+      - name: Install Python texture-generation dependency
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore deterministic texture files in the build workspace
+        run: |
+          python -m pip install --disable-pip-version-check Pillow
+          python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
+
+      - name: Download Godot 4.7.2 and matching Android export templates
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"             --output "$RUNNER_TEMP/godot.zip"
+          mkdir -p "$RUNNER_TEMP/godot"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"             --output "$RUNNER_TEMP/godot-templates.tpz"
+          mkdir -p "$RUNNER_TEMP/templates" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/templates"
+          if [ -d "$RUNNER_TEMP/templates/templates" ]; then
+            cp -a "$RUNNER_TEMP/templates/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          else
+            cp -a "$RUNNER_TEMP/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          fi
+          printf '4.7.2.stable' > "$HOME/.local/share/godot/export_templates/4.7.2.stable/version.txt"
+          "$GODOT_BIN" --version
+
+      - name: Configure Godot Android SDK paths
+        run: |
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          EOF
+
+, 'version/code=600', preset, count=1, flags=re.MULTILINE)
+          preset = re.sub(r'^version/name=.*
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0"
+
+      - name: Install Python texture-generation dependency
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore deterministic texture files in the build workspace
+        run: |
+          python -m pip install --disable-pip-version-check Pillow
+          python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
+
+      - name: Download Godot 4.7.2 and matching Android export templates
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"             --output "$RUNNER_TEMP/godot.zip"
+          mkdir -p "$RUNNER_TEMP/godot"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
+          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"             --output "$RUNNER_TEMP/godot-templates.tpz"
+          mkdir -p "$RUNNER_TEMP/templates" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/templates"
+          if [ -d "$RUNNER_TEMP/templates/templates" ]; then
+            cp -a "$RUNNER_TEMP/templates/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          else
+            cp -a "$RUNNER_TEMP/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          fi
+          printf '4.7.2.stable' > "$HOME/.local/share/godot/export_templates/4.7.2.stable/version.txt"
+          "$GODOT_BIN" --version
+
+      - name: Configure Godot Android SDK paths
+        run: |
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          EOF
+
+, 'version/name="0.6.0"', preset, count=1, flags=re.MULTILINE)
+          preset_path.write_text(preset)
+
+          # Chunk meshes had world-coordinate vertices despite each chunk having its own Node3D.
+          # Local-space vertices stay near 0..16, reducing precision loss and depth artefacts.
+          world_path = project / "scripts/world.gd"
+          world = world_path.read_text()
+          chunk_root_marker = '    chunk_root.name = "Chunk_%d_%d" % [coord.x, coord.y]'
+          if world.count(chunk_root_marker) != 1:
+              raise SystemExit("Chunk-root creation marker missing")
+          if "chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE)" not in world:
+              world = world.replace(
+                  chunk_root_marker,
+                  chunk_root_marker + "\n"
+                  "    chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE), 0.0, float(coord.y * CHUNK_SIZE))",
+                  1
+              )
+
+          mesh_start = world.find("func _rebuild_chunk_mesh(chunk_coord: Vector2i) -> void:")
+          mesh_end = world.find("\nfunc _fluid_surface_height", mesh_start)
+          if mesh_start < 0 or mesh_end < 0:
+              raise SystemExit("Chunk mesh builder boundaries missing")
+          mesh_func = world[mesh_start:mesh_end]
+          arrays_marker = "    if vertices.is_empty():"
+          if "var chunk_mesh_origin := Vector3(" not in mesh_func:
+              if mesh_func.count(arrays_marker) != 1:
+                  raise SystemExit("Mesh array finalization marker missing")
+              localize = (
+                  "    var chunk_mesh_origin := Vector3(float(chunk_coord.x * CHUNK_SIZE), 0.0, float(chunk_coord.y * CHUNK_SIZE))\n"
+                  "    for vertex_index in range(vertices.size()):\n"
+                  "        vertices[vertex_index] = vertices[vertex_index] - chunk_mesh_origin\n"
+                  "    for face_vertex_index in range(collision_faces.size()):\n"
+                  "        collision_faces[face_vertex_index] = collision_faces[face_vertex_index] - chunk_mesh_origin\n"
+              )
+              mesh_func = mesh_func.replace(arrays_marker, localize + arrays_marker, 1)
+              world = world[:mesh_start] + mesh_func + world[mesh_end:]
+
+          # Loading a chunk used to remesh neighbours immediately, rebuilding their concave
+          # collision BVHs repeatedly. Rebuild one queued neighbour per frame instead.
+          if "var _stream_dirty_mesh_chunks: Dictionary" not in world:
+              field_anchor = "var _generation_base_cache_active := false"
+              if world.count(field_anchor) != 1:
+                  raise SystemExit("Streaming dirty-chunk field anchor missing")
+              world = world.replace(field_anchor, field_anchor + "\nvar _stream_dirty_mesh_chunks: Dictionary = {}", 1)
+          process_start = world.find("func _process(delta: float) -> void:")
+          process_end = world.find("\nfunc generate_world", process_start)
+          if process_start < 0 or process_end < 0:
+              raise SystemExit("World process method boundaries missing")
+          process_func = world[process_start:process_end]
+          old_load = (
+              "            _load_chunk(coord)\n"
+              "            _refresh_chunk_and_neighbours(coord)\n"
+              "            generated_this_frame += 1"
+          )
+          new_load = (
+              "            _load_chunk(coord)\n"
+              "            _rebuild_chunk_mesh(coord)\n"
+              "            for offset in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:\n"
+              "                var affected_coord: Vector2i = coord + offset\n"
+              "                if chunk_nodes.has(affected_coord):\n"
+              "                    _stream_dirty_mesh_chunks[affected_coord] = true\n"
+              "            generated_this_frame += 1"
+          )
+          if process_func.count(old_load) != 1:
+              raise SystemExit("Chunk streaming rebuild block not found exactly once")
+          process_func = process_func.replace(old_load, new_load, 1)
+          flush_anchor = "            generated_this_frame += 1"
+          flush = (
+              "\n"
+              "    if not _stream_dirty_mesh_chunks.is_empty():\n"
+              "        var dirty_keys := _stream_dirty_mesh_chunks.keys()\n"
+              "        var dirty_coord: Vector2i = dirty_keys[0]\n"
+              "        _stream_dirty_mesh_chunks.erase(dirty_coord)\n"
+              "        if chunk_nodes.has(dirty_coord):\n"
+              "            _rebuild_chunk_mesh(dirty_coord)"
+          )
+          if process_func.count(flush_anchor) != 1:
+              raise SystemExit("Deferred remesh flush marker missing")
+          process_func = process_func.replace(flush_anchor, flush, 1)
+          world = world[:process_start] + process_func + world[process_end:]
+
+          # A function call used as Dictionary.get's default is evaluated even when the key
+          # exists. The old height expression therefore regenerated noise for every voxel.
+          eager_height = "    var terrain_height := int(surface_heights.get(Vector2i(cell.x, cell.z), _terrain_height_at(cell.x, cell.z)))"
+          lazy_height = (
+              "    var terrain_key := Vector2i(cell.x, cell.z)\n"
+              "    var terrain_height: int\n"
+              "    if surface_heights.has(terrain_key):\n"
+              "        terrain_height = int(surface_heights[terrain_key])\n"
+              "    else:\n"
+              "        terrain_height = _terrain_height_at(cell.x, cell.z)"
+          )
+          if eager_height in world:
+              world = world.replace(eager_height, lazy_height, 1)
+          elif "var terrain_key := Vector2i(cell.x, cell.z)" not in world:
+              raise SystemExit("Base-block eager terrain-height lookup not found")
+
+          # Per-block transient expiry deep-copied state dictionaries every frame. Run at 10 Hz.
+          if "var _transient_tick_accumulator :=" not in world:
+              tick_anchor = "var _block_light_scan_accumulator := 0.0"
+              if world.count(tick_anchor) != 1:
+                  raise SystemExit("Transient-state timer insertion point missing")
+              world = world.replace(tick_anchor, tick_anchor + "\nvar _transient_tick_accumulator := 0.0", 1)
+          process_start = world.find("func _process(delta: float) -> void:")
+          process_end = world.find("\nfunc generate_world", process_start)
+          process_func = world[process_start:process_end]
+          tick_call = "    _tick_transient_states(delta)"
+          if tick_call in process_func:
+              process_func = process_func.replace(
+                  tick_call,
+                  "    _transient_tick_accumulator += delta\n"
+                  "    if _transient_tick_accumulator >= 0.1:\n"
+                  "        var transient_delta := _transient_tick_accumulator\n"
+                  "        _transient_tick_accumulator = 0.0\n"
+                  "        _tick_transient_states(transient_delta)",
+                  1,
+              )
+          elif "_transient_tick_accumulator >= 0.1" not in process_func:
+              raise SystemExit("Transient per-frame work marker missing")
+          world = world[:process_start] + process_func + world[process_end:]
+          world_path.write_text(world)
+
+          # Shorter mobile far plane limits far-field work and improves depth precision.
+          player_path = project / "scripts/player_controller.gd"
+          player = player_path.read_text()
+          fov_line = "    camera_node.fov = 70.0"
+          if fov_line not in player:
+              raise SystemExit("Camera setup marker missing")
+          if "camera_node.far = 192.0" not in player:
+              player = player.replace(
+                  fov_line,
+                  fov_line + "\n"
+                  "    camera_node.near = 0.08\n"
+                  "    camera_node.far = 192.0 if OS.has_feature(\"mobile\") else 512.0",
+                  1,
+              )
+          player_path.write_text(player)
+
+          # Pixel-edged grey controls, clear Minecraft-like action labels, centered pause.
+          hud_path = project / "scripts/mobile_hud.gd"
+          hud = hud_path.read_text()
+          style_start = hud.find("func _apply_mobile_button_style(")
+          style_end = hud.find("\nfunc _anchor_top_button", style_start)
+          if style_start < 0 or style_end < 0:
+              raise SystemExit("Mobile HUD styling function boundaries missing")
+          style = hud[style_start:style_end]
+          for old, new in [
+              ("Color(0.075, 0.09, 0.11, 0.55)", "Color(0.28, 0.30, 0.30, 0.52)"),
+              ("Color(0.84, 0.88, 0.9, 0.50)", "Color(0.03, 0.04, 0.04, 0.94)"),
+              ("Color(1.0, 0.91, 0.55, 0.98)", "Color(1.0, 0.82, 0.13, 1.0)"),
+              ("normal.set_corner_radius_all(40 if circular else 6)", "normal.set_corner_radius_all(32 if circular else 1)"),
+              ("Color(0.20, 0.24, 0.27, 0.72)", "Color(0.42, 0.44, 0.44, 0.75)"),
+              ("Color(0.32, 0.35, 0.36, 0.82)", "Color(0.56, 0.57, 0.57, 0.86)"),
+          ]:
+              style = style.replace(old, new, 1)
+          shadow_anchor = "    normal.content_margin_bottom = 2.0"
+          if shadow_anchor in style and "normal.shadow_size = 2" not in style:
+              style = style.replace(
+                  shadow_anchor,
+                  shadow_anchor + "\n"
+                  "    normal.shadow_color = Color(0.0, 0.0, 0.0, 0.55)\n"
+                  "    normal.shadow_size = 2\n"
+                  "    normal.shadow_offset = Vector2(0, 2)",
+                  1,
+              )
+          hud = hud[:style_start] + style + hud[style_end:]
+
+          top_start = hud.find("func _build_top_bar() -> void:")
+          top_end = hud.find("\nfunc _build_joystick", top_start)
+          if top_start < 0 or top_end < 0:
+              raise SystemExit("HUD top-bar boundaries missing")
+          top = hud[top_start:top_end]
+          for old, new in [
+              ("menu_btn.anchor_left = 1.0", "menu_btn.anchor_left = 0.5"),
+              ("menu_btn.anchor_right = 1.0", "menu_btn.anchor_right = 0.5"),
+              ("menu_btn.offset_left = -58.0", "menu_btn.offset_left = -23.0"),
+              ("menu_btn.offset_right = -12.0", "menu_btn.offset_right = 23.0"),
+          ]:
+              top = top.replace(old, new, 1)
+          hud = hud[:top_start] + top + hud[top_end:]
+
+          layout_start = hud.find("func _adapt_layout() -> void:")
+          layout_end = hud.find("\nfunc show_message", layout_start)
+          if layout_start < 0 or layout_end < 0:
+              raise SystemExit("HUD adaptive-layout boundaries missing")
+          layout = hud[layout_start:layout_end]
+          layout = layout.replace("pause_btn.offset_left = -58.0 * scale", "pause_btn.offset_left = -23.0 * scale", 1)
+          layout = layout.replace("pause_btn.offset_right = -12.0 * scale", "pause_btn.offset_right = 23.0 * scale", 1)
+          layout = layout.replace("break_btn.offset_left = -100.0 * scale", "break_btn.offset_left = -96.0 * scale", 1)
+          layout = layout.replace("jump_btn.offset_left = -100.0 * scale", "jump_btn.offset_left = -94.0 * scale", 1)
+          layout = layout.replace("place_btn.offset_left = -190.0 * scale", "place_btn.offset_left = -186.0 * scale", 1)
+          hud = hud[:layout_start] + layout + hud[layout_end:]
+
+          for old, new in [
+              ('_make_button("HIT", "BreakButton", root, 82, 82, 16)', '_make_button("BREAK", "BreakButton", root, 78, 78, 11)'),
+              ('_make_button("USE", "PlaceButton", root, 70, 70, 14)', '_make_button("PLACE", "PlaceButton", root, 66, 66, 11)'),
+              ('_make_button("↑", "JumpButton", root, 82, 82, 28)', '_make_button("JUMP", "JumpButton", root, 76, 76, 11)'),
+              ('_make_button("⌄", "DescendButton", root, 64, 64, 24)', '_make_button("DOWN", "DescendButton", root, 60, 60, 10)'),
+              ('_make_button("»", "SprintButton", root, 46, 46, 22)', '_make_button("RUN", "SprintButton", root, 46, 46, 10)'),
+          ]:
+              hud = hud.replace(old, new, 1)
+          hud_path.write_text(hud)
+
+          docs = project / "docs"
+          docs.mkdir(exist_ok=True)
+          (docs / "RENDERING_FIX_0.6.0.md").write_text(
+              "# Rendering and performance fix 0.6.0\n\n"
+              "Previous Android builds used Godot Mobile/Vulkan. Godot issue #115217 documents horizontal "
+              "3D corruption on some Android GPU/driver combinations; Compatibility/OpenGL ES is a documented "
+              "workaround. This build selects gl_compatibility for default and mobile rendering and runs a "
+              "graphical Compatibility smoke test on Mesa software OpenGL.\n\n"
+              "Performance changes: local-space chunk mesh/collision vertices, one deferred neighbour remesh "
+              "per frame, lazy terrain-height lookup, and transient state scans throttled to 10 Hz. No "
+              "block/entity definitions are removed.\n"
+          )
+
+          final_settings = settings_path.read_text()
+          if 'renderer/rendering_method="gl_compatibility"' not in final_settings:
+              raise SystemExit("Compatibility renderer selection was not persisted")
+          if 'renderer/rendering_method.mobile="gl_compatibility"' not in final_settings:
+              raise SystemExit("Mobile renderer selection was not persisted as Compatibility")
+          final_world = world_path.read_text()
+          if "chunk_mesh_origin" not in final_world or "chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE)" not in final_world:
+              raise SystemExit("Chunk-local-coordinate assertion failed")
+          print("Compatibility renderer selected; chunk coordinates localized; streaming and per-frame CPU work reduced.")
+          PY
+      - name: Set up Java for Godot Android export
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -1198,7 +1650,7 @@ jobs:
             echo "Spawn surface invariant was not logged."
             exit 1
           fi
-          # Real, non-headless OpenGL render under Mesa software driver, not just parsing.
+          # Real graphical compatibility render under Mesa/OpenGL, not just headless parsing.
           if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq xvfb ffmpeg
@@ -1206,6 +1658,10 @@ jobs:
           timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 20 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
           if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-visual.log"; then
             echo "Graphical Compatibility startup reported an engine/script error."
+            exit 1
+          fi
+          if ! grep -Eqi "OpenGL API|OpenGL ES" "$RUNNER_TEMP/godot-visual.log"; then
+            echo "Visual test did not report an OpenGL renderer."
             exit 1
           fi
           test -s "$RUNNER_TEMP/visual/compatibility-smoke.avi"
