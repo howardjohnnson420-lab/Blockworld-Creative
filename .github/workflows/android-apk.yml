@@ -862,7 +862,7 @@ jobs:
           fluid_face_block = "\n".join([
               "            var face_box_min := box_min",
               "            var face_box_max := box_max",
-              "            if shape_id == \\"fluid\\" and at_cell_boundary and neighbour_id == get_block_id(cell):",
+              '            if shape_id == "fluid" and at_cell_boundary and neighbour_id == get_block_id(cell):',
               "                # Shared fluid faces cause z-fighting and excessive triangles in oceans.",
               "                if face_index in [2, 3]:",
               "                    continue",
