@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uca554f035536a885cea9c4a451b.dl.dropboxusercontent.com/cd/0/get/DKEVfH-0TMtTayY-__3wkBeeMHeJ3UVK43D87hAStstEglDi7b8xvqZiRfYT41HpP7k0i5D-l9hJNyusviquwaZcnBPnpdBQvckMZfETRkyfQ0QwbI7PFUMGbrflOG1rAfwZXbD77nCmNuSLwb4IbZuJGDwlRe8j_DHpqzKTL4YMxQ/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://ucfe52480fd4b3a3f0055b6d5d83.dl.dropboxusercontent.com/cd/0/get/DKFikrkq_S9JaZDkeuUwR36oYHQa3imz0yZ3dH4q7KPZ5anCb4uu_HJYa0fuF-G24FyAfqaSAGFK8AMh6HBCMJVa00I5Qe9Oubcu6p7rFaJMRB7hl80fZKu74u4NT3hezJfpF9IOmQ0chq8Q57OLj5NMKhKaJphnSDm4Tr12bumDag/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -47,7 +47,20 @@ jobs:
                       break
           if not found:
               raise SystemExit("No [rendering] section in project.godot")
-          project_file.write_text("\\n".join(lines) + "\\n")
+          project_file.write_text("\n".join(lines) + "\n")
+          PY
+          python3 - "$PROJECT_DIR/scripts/main.gd" <<'PY'
+          from pathlib import Path
+          import sys
+          script = Path(sys.argv[1])
+          source = script.read_text()
+          needle = 'func _cell_key(cell: Vector3i) -> String:\\n    return "%d,%d,%d" % [cell.x, cell.y, cell.z]\\n'
+          replacement = needle + '\\nfunc _cell_from_key(cell_key: String) -> Vector3i:\\n    var parts := cell_key.split(",")\\n    if parts.size() != 3:\\n        return Vector3i.ZERO\\n    return Vector3i(int(parts[0]), int(parts[1]), int(parts[2]))\\n'
+          if "_cell_from_key(cell_key" not in source:
+              if needle not in source:
+                  raise SystemExit("Could not find _cell_key insertion point in scripts/main.gd")
+              source = source.replace(needle, replacement, 1)
+              script.write_text(source)
           PY
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
