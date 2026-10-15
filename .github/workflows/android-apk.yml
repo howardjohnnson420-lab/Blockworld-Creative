@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc09eb2557382be0fde16237a51a.dl.dropboxusercontent.com/cd/0/get/DKFm5hv8S0RGSdub09BbUKXjdWetXL3afYmKg1mwVB1YBqrl5s6mZI-a2StfG3ll4Escsi51AmDmEFIY4I1ravJX2a8uGuhsm8YudswNe3ldwZQ71gmHCRfyDtAeHkYMHBNjiWi0gzIAL-hLwdVV0eje8GjX91a9TOXa0USWmjKT_Q/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uc4e6e9973f7ce54e705adc98ab9.dl.dropboxusercontent.com/cd/0/get/DKHfb2eguQDz4ngGqP4RXtB9wvTujgC0xWwvU5ZHmDn2aly-hmEFjklYo2cT2jVN-iBC6Ha1wxitEMmmz7DHFaYCkJ5Ki9wKhRzEDQTcI9rtV28UYsPZFiMV4f3D8dkqki6AkETTfZj8mGDwVnGMrLeC9iFHgJuG88sMA3HT-d5F3Q/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1178,14 +1178,14 @@ jobs:
               if not pattern.search(settings):
                   raise SystemExit("Renderer setting missing: " + key)
               settings = pattern.sub(key + '="gl_compatibility"', settings, count=1)
-          settings = re.sub(r'^config/version=.*$', 'config/version="0.6.2"', settings, count=1, flags=re.MULTILINE)
+          settings = re.sub(r'^config/version=.*$', 'config/version="0.6.3"', settings, count=1, flags=re.MULTILINE)
           settings_path.write_text(settings)
-          (project / "VERSION.txt").write_text("0.6.2\n")
+          (project / "VERSION.txt").write_text("0.6.3\n")
 
           preset_path = project / "export_presets.cfg"
           preset = preset_path.read_text()
-          preset = re.sub(r'^version/code=.*$', 'version/code=602', preset, count=1, flags=re.MULTILINE)
-          preset = re.sub(r'^version/name=.*$', 'version/name="0.6.2"', preset, count=1, flags=re.MULTILINE)
+          preset = re.sub(r'^version/code=.*$', 'version/code=603', preset, count=1, flags=re.MULTILINE)
+          preset = re.sub(r'^version/name=.*$', 'version/name="0.6.3"', preset, count=1, flags=re.MULTILINE)
           preset_path.write_text(preset)
 
           # Local chunk-space mesh coordinates reduce floating-point precision loss:
@@ -1409,6 +1409,96 @@ jobs:
           elif "    var surface: int\n    if surface_heights.has(column):" not in world:
               raise SystemExit("get_surface_y eager-default lookup not found")
           
+          # Optimize procedural generation without removing any block/biome/cave feature:
+          # * Don't compute/cache the biome for every underground stone cell.
+          # * Pass the already-computed terrain height into cave-noise evaluation.
+          # * Cache BlockRegistry definitions and reuse the constant DIRECTIONS array.
+          old_biome = "    var biome := get_biome_at(cell.x, cell.z)\n    if cell.y > terrain_height:"
+          if world.count(old_biome) != 1:
+              raise SystemExit("Overworld biome lookup hot-path anchor missing")
+          world = world.replace(old_biome, "    if cell.y > terrain_height:", 1)
+          surface_layer_marker = "    if cell.y < terrain_height - 1:"
+          if world.count(surface_layer_marker) != 1:
+              raise SystemExit("Surface biome lookup insertion point missing")
+          world = world.replace(surface_layer_marker, "    var biome := get_biome_at(cell.x, cell.z)\n" + surface_layer_marker, 1)
+
+          replacements = [
+              ("if _is_cave_cell(cell):", "if _is_cave_cell(cell, terrain_height):"),
+              ("if cell.y < floor_height - 4 and _is_cave_cell(cell):", "if cell.y < floor_height - 4 and _is_cave_cell(cell, floor_height):"),
+              ("if cell.y < surface - 4 and _is_cave_cell(cell):", "if cell.y < surface - 4 and _is_cave_cell(cell, surface):"),
+              ("func _is_cave_cell(cell: Vector3i) -> bool:", "func _is_cave_cell(cell: Vector3i, terrain_height: int) -> bool:"),
+              ("if cell.y < MIN_WORLD_Y + 6 or cell.y > _terrain_height_at(cell.x, cell.z) - 5:", "if cell.y < MIN_WORLD_Y + 6 or cell.y > terrain_height - 5:"),
+          ]
+          for old, new in replacements:
+              count = world.count(old)
+              if count < 1:
+                  raise SystemExit("Cave/biome optimization anchor missing: " + old)
+              world = world.replace(old, new, 1)
+
+          if "var _render_block_definition_cache: Dictionary = {}" not in world:
+              field_anchor = "var _generation_base_cache_active := false"
+              if world.count(field_anchor) != 1:
+                  raise SystemExit("Block metadata cache member anchor missing")
+              world = world.replace(field_anchor, field_anchor + "\nvar _render_block_definition_cache: Dictionary = {}", 1)
+          if "func _cached_render_definition(block_id: String) -> Dictionary:" not in world:
+              helper = "\n".join([
+                  "func _cached_render_definition(block_id: String) -> Dictionary:",
+                  "    if not _render_block_definition_cache.has(block_id):",
+                  "        _render_block_definition_cache[block_id] = BlockRegistry.get_block(block_id)",
+                  "    return _render_block_definition_cache[block_id]",
+                  "",
+              ])
+              anchor = "func _base_cell_has_visible_face(cell: Vector3i, block_id: String) -> bool:"
+              if world.count(anchor) != 1:
+                  raise SystemExit("Visible-face helper anchor missing")
+              world = world.replace(anchor, helper + anchor, 1)
+          visible_start = world.find("func _base_cell_has_visible_face(cell: Vector3i, block_id: String) -> bool:")
+          visible_end = world.find("\nfunc _write_generated_block", visible_start)
+          if visible_start < 0 or visible_end < 0:
+              raise SystemExit("Visible-face helper boundaries missing for hot-path optimization")
+          visible = world[visible_start:visible_end]
+          visible = visible.replace("var definition := BlockRegistry.get_block(block_id)", "var definition := _cached_render_definition(block_id)", 1)
+          directions_line = "    var directions: Array[Vector3i] = [Vector3i.RIGHT, Vector3i.LEFT, Vector3i.UP, Vector3i.DOWN, Vector3i.BACK, Vector3i.FORWARD]\n"
+          if visible.count(directions_line) != 1:
+              raise SystemExit("Per-cell direction-array allocation not found exactly once")
+          visible = visible.replace(directions_line, "", 1).replace("for direction in directions:", "for direction in DIRECTIONS:", 1)
+          visible = visible.replace("var neighbour_def := BlockRegistry.get_block(neighbour_id)", "var neighbour_def := _cached_render_definition(neighbour_id)", 1)
+          world = world[:visible_start] + visible + world[visible_end:]
+
+          # Use a 3x3 resident chunk view at all targets; mobile already used this radius.
+          # This avoids silently benchmarking a 5x5 world on the Linux screenshot runner.
+          active_radius_start = world.find("func _active_load_radius() -> int:")
+          active_radius_end = world.find("\nfunc _active_unload_margin", active_radius_start)
+          if active_radius_start < 0 or active_radius_end < 0:
+              raise SystemExit("Active load radius boundaries missing")
+          world = world[:active_radius_start] + "func _active_load_radius() -> int:\n    return 1\n" + world[active_radius_end:]
+          within_old = "func _within_load_radius(coord: Vector2i, center: Vector2i) -> bool:\n    return _within_radius(coord, center, LOAD_RADIUS)"
+          within_new = "func _within_load_radius(coord: Vector2i, center: Vector2i) -> bool:\n    return _within_radius(coord, center, _active_load_radius())"
+          if within_old not in world:
+              raise SystemExit("Fixed-radius streaming helper anchor missing")
+          world = world.replace(within_old, within_new, 1)
+
+          # Chunk timings provide objective evidence of the synchronous loading spikes.
+          load_start = "func _load_chunk(coord: Vector2i) -> void:\n    if chunk_nodes.has(coord):\n        return"
+          load_timed = load_start + "\n    var _chunk_build_started_msec := Time.get_ticks_msec()"
+          if load_start in world and "CHUNK_LOAD_MS:" not in world:
+              world = world.replace(load_start, load_timed, 1)
+              completed_line = "    _generated_chunk_count += 1"
+              if world.count(completed_line) != 1:
+                  raise SystemExit("Chunk load timing completion marker missing")
+              world = world.replace(
+                  completed_line,
+                  completed_line + '\n    print("CHUNK_LOAD_MS:", coord, " ", Time.get_ticks_msec() - _chunk_build_started_msec)',
+                  1,
+              )
+
+          world_path.write_text(world)
+
+          # Ensure health/hunger rendering and pause positions are actually updated after resize.
+          settings = settings_path.read_text()
+          if 'renderer/rendering_method="gl_compatibility"' not in settings or 'renderer/rendering_method.mobile="gl_compatibility"' not in settings:
+              raise SystemExit("Compatibility renderer config lost during performance patch")
+          
           world_path.write_text(world)
 
           player_path = project / "scripts/player_controller.gd"
@@ -1588,8 +1678,8 @@ jobs:
 
           docs = project / "docs"
           docs.mkdir(exist_ok=True)
-          (docs / "RENDERING_FIX_0.6.2.md").write_text(
-              "# Rendering and performance fix 0.6.2\n\n"
+          (docs / "RENDERING_FIX_0.6.3.md").write_text(
+              "# Rendering and performance fix 0.6.3\n\n"
               "Previous Android builds used Godot Mobile/Vulkan. Godot issue #115217 documents horizontal "
               "3D corruption on some Android GPU/driver combinations; Compatibility/OpenGL ES is a documented "
               "workaround. This build selects gl_compatibility for default and mobile rendering and runs a "
@@ -1640,7 +1730,7 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y -qq xvfb ffmpeg
           fi
-          timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 20 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
+          timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 40 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
           if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-visual.log"; then
             echo "Graphical Compatibility startup reported an engine/script error."
             exit 1
@@ -1650,20 +1740,32 @@ jobs:
             exit 1
           fi
           test -s "$RUNNER_TEMP/visual/compatibility-smoke.avi"
-          ffmpeg -y -loglevel error -ss 1 -i "$RUNNER_TEMP/visual/compatibility-smoke.avi" -frames:v 1 "$RUNNER_TEMP/visual/compatibility-smoke.png"
+          ffmpeg -y -loglevel error -ss 3 -i "$RUNNER_TEMP/visual/compatibility-smoke.avi" -frames:v 1 "$RUNNER_TEMP/visual/compatibility-smoke.png"
           test -s "$RUNNER_TEMP/visual/compatibility-smoke.png"
+          CHUNK_LOAD_COUNT="$(grep -c "CHUNK_LOAD_MS:" "$RUNNER_TEMP/godot-visual.log" || true)"
+          if [ "$CHUNK_LOAD_COUNT" -lt 9 ]; then
+            echo "The visual screenshot was taken before the full 3x3 resident chunk ring loaded (count=$CHUNK_LOAD_COUNT)."
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/godot-visual.log" <<'PY'
+          import re, sys
+          times = [int(value) for value in re.findall(r"CHUNK_LOAD_MS:.*? (\d+)", open(sys.argv[1], encoding="utf-8").read())]
+          if len(times) < 9:
+              raise SystemExit(f"Only {len(times)} chunks loaded during visual smoke test")
+          print("Chunk generation timing ms: count=", len(times), "max=", max(times), "avg=", round(sum(times)/len(times), 1))
+          PY
           cp "$RUNNER_TEMP/visual/compatibility-smoke.png" "$GITHUB_WORKSPACE/visual-artifacts/compatibility-smoke.png"
           cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
           echo "Headless startup and graphical Compatibility smoke tests passed."
           mkdir -p "$PROJECT_DIR/build"
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.2.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
           if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-export.log"; then
             echo "GDScript errors found during export; refusing to publish a broken APK."
             exit 1
           fi
-          test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.2.apk"
-          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.2.apk"
-          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.2-Source.zip" <<'PY'
+          test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk"
+          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.3.apk"
+          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.3-Source.zip" <<'PY'
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
           import sys
@@ -1683,23 +1785,23 @@ jobs:
       - name: Publish Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.2-Android
-          path: source/Flatworld_Creative_Godot/build/Flatworld-Creative-0.6.2.apk
+          name: Flatworld-Creative-0.6.3-Android
+          path: source/Flatworld_Creative_Godot/build/Flatworld-Creative-0.6.3.apk
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish patched source project
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.2-Source
-          path: Flatworld-Creative-0.6.2-Source.zip
+          name: Flatworld-Creative-0.6.3-Source
+          path: Flatworld-Creative-0.6.3-Source.zip
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish Compatibility-rendered screenshot and logs
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.2-Visual-Smoke
+          name: Flatworld-Creative-0.6.3-Visual-Smoke
           path: visual-artifacts/*
           if-no-files-found: error
           retention-days: 14
