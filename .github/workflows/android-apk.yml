@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uce0a6a8aa02f7d5f93a5d52c112.dl.dropboxusercontent.com/cd/0/get/DKETk-YpYjJZDaxvTZrB-Z3dVFAIZJZ_DD3nlJJbCHfDNR4HC5IEzzeJF3FpNPng0f4X2q_Qh_pT7GhX8IfzhTB5eshvnOlpGbSCu5FHW0vVr7_IfCUjTvrVZaApXOzKkWo0wqgZl7zKt3o6D_Yl_aaaJUQrjOxJp4bu9qBt5Yb3mw/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uc09eb2557382be0fde16237a51a.dl.dropboxusercontent.com/cd/0/get/DKFm5hv8S0RGSdub09BbUKXjdWetXL3afYmKg1mwVB1YBqrl5s6mZI-a2StfG3ll4Escsi51AmDmEFIY4I1ravJX2a8uGuhsm8YudswNe3ldwZQ71gmHCRfyDtAeHkYMHBNjiWi0gzIAL-hLwdVV0eje8GjX91a9TOXa0USWmjKT_Q/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1178,14 +1178,14 @@ jobs:
               if not pattern.search(settings):
                   raise SystemExit("Renderer setting missing: " + key)
               settings = pattern.sub(key + '="gl_compatibility"', settings, count=1)
-          settings = re.sub(r'^config/version=.*$', 'config/version="0.6.1"', settings, count=1, flags=re.MULTILINE)
+          settings = re.sub(r'^config/version=.*$', 'config/version="0.6.2"', settings, count=1, flags=re.MULTILINE)
           settings_path.write_text(settings)
-          (project / "VERSION.txt").write_text("0.6.1\n")
+          (project / "VERSION.txt").write_text("0.6.2\n")
 
           preset_path = project / "export_presets.cfg"
           preset = preset_path.read_text()
-          preset = re.sub(r'^version/code=.*$', 'version/code=601', preset, count=1, flags=re.MULTILINE)
-          preset = re.sub(r'^version/name=.*$', 'version/name="0.6.1"', preset, count=1, flags=re.MULTILINE)
+          preset = re.sub(r'^version/code=.*$', 'version/code=602', preset, count=1, flags=re.MULTILINE)
+          preset = re.sub(r'^version/name=.*$', 'version/name="0.6.2"', preset, count=1, flags=re.MULTILINE)
           preset_path.write_text(preset)
 
           # Local chunk-space mesh coordinates reduce floating-point precision loss:
@@ -1200,13 +1200,10 @@ jobs:
           winding_pattern = re.compile(
               r"PackedInt32Array\(\[\s*base_index\s*,\s*base_index\s*\+\s*2\s*,\s*base_index\s*\+\s*1\s*,\s*base_index\s*,\s*base_index\s*\+\s*3\s*,\s*base_index\s*\+\s*2\s*\]\)"
           )
-          world, restored_faces = winding_pattern.subn(
-              "PackedInt32Array([base_index, base_index + 1, base_index + 2, base_index, base_index + 2, base_index + 3])",
-              world
-          )
-          if restored_faces < 3:
-              raise SystemExit(f"Expected to restore outward-facing indices at all cube, shaped, and plant faces; restored {restored_faces}")
-          print(f"Restored outward-facing winding for {restored_faces} mesh quad sites.")
+          preserved_faces = len(winding_pattern.findall(world))
+          if preserved_faces < 5:
+              raise SystemExit(f"Expected reversed outward-facing index order at all mesh sites; found {preserved_faces}")
+          print(f"Preserved the validated mesh winding at {preserved_faces} quad-index sites.")
 
           chunk_root_marker = '    chunk_root.name = "Chunk_%d_%d" % [coord.x, coord.y]'
           if world.count(chunk_root_marker) != 1:
@@ -1320,6 +1317,98 @@ jobs:
           elif "_transient_tick_accumulator >= 0.1" not in process_func:
               raise SystemExit("Transient per-frame work marker missing")
           world = world[:process_start] + process_func + world[process_end:]
+          # The regular gameplay get_block_id intentionally returns air for unloaded
+          # chunks. Using it for mesh occlusion makes a solid neighboring chunk look like
+          # air until it streams, so both sides emit coplanar faces and z-fight at seams.
+          # Use deterministic base-world data for a neighbor inside view distance.
+          mesh_helper = """func _mesh_neighbour_block_id(cell: Vector3i) -> String:
+              if cell.y < MIN_WORLD_Y or cell.y > MAX_WORLD_Y:
+                  return "air"
+              var cell_key := _cell_key(cell)
+              if modifications.has(cell_key):
+                  return str(modifications[cell_key])
+              if blocks.has(cell):
+                  return str(blocks[cell])
+              var neighbour_coord := _chunk_for_cell(cell)
+              if chunk_nodes.has(neighbour_coord) or _within_radius(neighbour_coord, streaming_center, _active_load_radius()):
+                  return _base_block_at(cell)
+              return "air"
+
+          """
+          if "func _mesh_neighbour_block_id(" not in world:
+              helper_anchor = "func _base_cell_has_visible_face("
+              helper_at = world.find(helper_anchor)
+              if helper_at < 0:
+                  raise SystemExit("Mesh-neighbour helper insertion anchor missing")
+              world = world[:helper_at] + mesh_helper + world[helper_at:]
+
+          mesh_start = world.find("func _rebuild_chunk_mesh(chunk_coord: Vector2i) -> void:")
+          mesh_end = world.find("\nfunc _fluid_surface_height", mesh_start)
+          if mesh_start < 0 or mesh_end < 0:
+              raise SystemExit("Mesh neighbor-culling function boundaries missing")
+          mesh_func = world[mesh_start:mesh_end]
+          old_cube_neighbor = "var neighbour_id := get_block_id(neighbour)"
+          if mesh_func.count(old_cube_neighbor) != 1:
+              raise SystemExit(f"Expected one cube-neighbour lookup, found {mesh_func.count(old_cube_neighbor)}")
+          mesh_func = mesh_func.replace(old_cube_neighbor, "var neighbour_id := _mesh_neighbour_block_id(neighbour)", 1)
+          # Cache deterministic base cells during one mesh build, including occlusion
+          # queries for non-materialized cells and not-yet-loaded adjacent chunks.
+          if "_generation_base_cache_active = true" not in mesh_func:
+              cache_start = "    var face_normals: Array[Vector3] ="
+              if mesh_func.count(cache_start) != 1:
+                  raise SystemExit("Mesh-build cache activation marker missing")
+              mesh_func = mesh_func.replace(
+                  cache_start,
+                  "    var was_generation_cache_active := _generation_base_cache_active\n"
+                  "    if not was_generation_cache_active:\n"
+                  "        _generation_base_cache.clear()\n"
+                  "        _generation_base_cache_active = true\n"
+                  + cache_start,
+                  1,
+              )
+              finish_anchor = "    if vertices.is_empty():"
+              if mesh_func.count(finish_anchor) != 1:
+                  raise SystemExit("Mesh-build cache cleanup marker missing")
+              mesh_func = mesh_func.replace(
+                  finish_anchor,
+                  "    if not was_generation_cache_active:\n"
+                  "        _generation_base_cache_active = false\n"
+                  "        _generation_base_cache.clear()\n"
+                  + finish_anchor,
+                  1,
+              )
+          world = world[:mesh_start] + mesh_func + world[mesh_end:]
+
+          shape_start = world.find("func _append_shaped_block_geometry(")
+          shape_end = world.find("\nfunc _fence_connects_to", shape_start)
+          if shape_start < 0 or shape_end < 0:
+              raise SystemExit("Shaped-block neighbor-culling boundaries missing")
+          shaped = world[shape_start:shape_end]
+          old_shape_neighbor = "neighbour_id = get_block_id(cell + DIRECTIONS[face_index])"
+          if shaped.count(old_shape_neighbor) != 1:
+              raise SystemExit(f"Expected one shaped neighbour lookup, found {shaped.count(old_shape_neighbor)}")
+          shaped = shaped.replace(old_shape_neighbor, "neighbour_id = _mesh_neighbour_block_id(cell + DIRECTIONS[face_index])", 1)
+          world = world[:shape_start] + shaped + world[shape_end:]
+
+          fence_start = world.find("func _fence_connects_to(cell: Vector3i, direction: Vector3i) -> bool:")
+          fence_end = world.find("\nfunc _box_face_is_internal", fence_start)
+          if fence_start >= 0 and fence_end > fence_start:
+              fence_func = world[fence_start:fence_end]
+              fence_func = fence_func.replace("var neighbour_id := get_block_id(neighbour_cell)", "var neighbour_id := _mesh_neighbour_block_id(neighbour_cell)", 1)
+              world = world[:fence_start] + fence_func + world[fence_end:]
+
+          # Avoid GDScript's eager evaluation of Dictionary.get defaults in a hot accessor.
+          surface_old = "    var surface := int(surface_heights.get(column, _terrain_height_at(x, z)))"
+          surface_new = """    var surface: int
+              if surface_heights.has(column):
+                  surface = int(surface_heights[column])
+              else:
+                  surface = _terrain_height_at(x, z)"""
+          if surface_old in world:
+              world = world.replace(surface_old, surface_new, 1)
+          elif "    var surface: int\n    if surface_heights.has(column):" not in world:
+              raise SystemExit("get_surface_y eager-default lookup not found")
+          
           world_path.write_text(world)
 
           player_path = project / "scripts/player_controller.gd"
@@ -1371,13 +1460,25 @@ jobs:
           if top_start < 0 or top_end < 0:
               raise SystemExit("HUD top-bar boundaries missing")
           top = hud[top_start:top_end]
-          for old, new in [
-              ("menu_btn.anchor_left = 1.0", "menu_btn.anchor_left = 0.5"),
-              ("menu_btn.anchor_right = 1.0", "menu_btn.anchor_right = 0.5"),
-              ("menu_btn.offset_left = -58.0", "menu_btn.offset_left = -23.0"),
-              ("menu_btn.offset_right = -12.0", "menu_btn.offset_right = 23.0"),
-          ]:
+          # Leave pause at the top-right next to inventory, like Minecraft Bedrock.
+          hud = hud[:top_start] + top + hud[top_end:]
+          health_old_values = [
+              ("health_label.anchor_left = 1.0", "health_label.anchor_left = 0.5"),
+              ("health_label.anchor_right = 1.0", "health_label.anchor_right = 0.5"),
+              ("health_label.anchor_top = 0.0", "health_label.anchor_top = 1.0"),
+              ("health_label.anchor_bottom = 0.0", "health_label.anchor_bottom = 1.0"),
+              ("health_label.offset_left = -290.0", "health_label.offset_left = -175.0"),
+              ("health_label.offset_right = -122.0", "health_label.offset_right = 175.0"),
+              ("health_label.offset_top = 34.0", "health_label.offset_top = -88.0"),
+              ("health_label.offset_bottom = 57.0", "health_label.offset_bottom = -62.0"),
+              ("health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT", "health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER"),
+          ]
+          for old, new in health_old_values:
+              if old not in top:
+                  raise SystemExit("Missing health HUD layout marker: " + old)
               top = top.replace(old, new, 1)
+          top_start = hud.find("func _build_top_bar() -> void:")
+          top_end = hud.find("\nfunc _build_joystick", top_start)
           hud = hud[:top_start] + top + hud[top_end:]
 
           layout_start = hud.find("func _adapt_layout() -> void:")
@@ -1385,8 +1486,7 @@ jobs:
           if layout_start < 0 or layout_end < 0:
               raise SystemExit("HUD adaptive-layout boundaries missing")
           layout = hud[layout_start:layout_end]
-          layout = layout.replace("pause_btn.offset_left = -58.0 * scale", "pause_btn.offset_left = -23.0 * scale", 1)
-          layout = layout.replace("pause_btn.offset_right = -12.0 * scale", "pause_btn.offset_right = 23.0 * scale", 1)
+          # Preserve pause at top-right, adjacent to inventory.
           layout = layout.replace("break_btn.offset_left = -100.0 * scale", "break_btn.offset_left = -96.0 * scale", 1)
           layout = layout.replace("jump_btn.offset_left = -100.0 * scale", "jump_btn.offset_left = -94.0 * scale", 1)
           layout = layout.replace("place_btn.offset_left = -190.0 * scale", "place_btn.offset_left = -186.0 * scale", 1)
@@ -1400,12 +1500,96 @@ jobs:
               ('_make_button("»", "SprintButton", root, 46, 46, 22)', '_make_button("RUN", "SprintButton", root, 46, 46, 10)'),
           ]:
               hud = hud.replace(old, new, 1)
+          health_start = hud.find("func set_health(health: int, hunger: int) -> void:")
+          health_end = hud.find("\nfunc set_selected_block", health_start)
+          if health_start < 0 or health_end < 0:
+              raise SystemExit("Health HUD function boundaries missing")
+          health_fn = """func set_health(health: int, hunger: int) -> void:
+              if health_label == null:
+                  return
+              var hearts := ""
+              var food := ""
+              for i in range(10):
+                  var heart_units := health - i * 2
+                  hearts += "♥" if heart_units >= 2 else ("♡" if heart_units >= 0 else "♡")
+                  var food_units := hunger - i * 2
+                  food += "◆" if food_units >= 2 else ("◇" if food_units >= 0 else "◇")
+              health_label.text = hearts + "   " + food
+
+          """
+          hud = hud[:health_start] + health_fn + hud[health_end + 1:]
+
+          # Match Creative mode: show the hotbar without the Survival hearts/food row.
+          mode_start = hud.find("func set_mode_text(is_creative: bool) -> void:")
+          mode_end = hud.find("\nfunc set_inventory_state", mode_start)
+          if mode_start < 0 or mode_end < 0:
+              raise SystemExit("HUD mode function boundaries missing")
+          mode_fn = hud[mode_start:mode_end]
+          if "health_label.visible = not is_creative" not in mode_fn:
+              mode_fn = mode_fn.replace("    _creative_mode = is_creative", "    _creative_mode = is_creative\n    if health_label != null:\n        health_label.visible = not is_creative", 1)
+          hud = hud[:mode_start] + mode_fn + hud[mode_end:]
+
+          layout_start = hud.find("func _adapt_layout() -> void:")
+          layout_end = hud.find("\nfunc show_message", layout_start)
+          if layout_start < 0 or layout_end < 0:
+              raise SystemExit("HUD adaptive-layout boundaries missing")
+          layout = hud[layout_start:layout_end]
+          hstart = layout.find("    if health_label != null:")
+          hend = layout.find("    if status_label != null:", hstart)
+          if hstart < 0 or hend < 0:
+              raise SystemExit("Responsive health-label block boundaries missing")
+          health_layout = """    if health_label != null:
+                  health_label.anchor_left = 0.5
+                  health_label.anchor_right = 0.5
+                  health_label.anchor_top = 1.0
+                  health_label.anchor_bottom = 1.0
+                  health_label.offset_left = -175.0 * scale
+                  health_label.offset_right = 175.0 * scale
+                  health_label.offset_top = -88.0 * scale
+                  health_label.offset_bottom = -62.0 * scale
+                  health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+                  health_label.add_theme_font_size_override("font_size", maxi(10, roundi(17.0 * scale)))
+
+          """
+          layout = layout[:hstart] + health_layout + layout[hend:]
+          # Make the biome label a small secondary readout at top-left instead of competing with pause.
+          layout = layout.replace("biome_label.offset_left = -270.0 * scale", "biome_label.offset_left = 14.0 * scale", 1)
+          layout = layout.replace("biome_label.offset_right = -122.0 * scale", "biome_label.offset_right = 150.0 * scale", 1)
+          layout = layout.replace("biome_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT", "biome_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT", 1)
+          hud = hud[:layout_start] + layout + hud[layout_end:]
+
+          # Do not rebuild button StyleBox resources every frame; sprint status changes rarely.
+          if "var _sprint_style_enabled :=" not in hud:
+              sprint_anchor = "var _sprint_enabled := false"
+              if hud.count(sprint_anchor) != 1:
+                  raise SystemExit("Sprint-style cache member anchor missing")
+              hud = hud.replace(sprint_anchor, sprint_anchor + "\nvar _sprint_style_enabled := false", 1)
+          sprint_start = hud.find("func set_sprint_text(enabled: bool) -> void:")
+          sprint_end = hud.find("\nfunc ", sprint_start + 8)
+          if sprint_start < 0 or sprint_end < 0:
+              raise SystemExit("Sprint status function boundaries missing")
+          sprint_fn = """func set_sprint_text(enabled: bool) -> void:
+              _sprint_enabled = enabled
+              var sprint_btn := root.get_node_or_null("SprintButton") as Button
+              if sprint_btn == null:
+                  return
+              if _sprint_style_enabled == enabled:
+                  return
+              _sprint_style_enabled = enabled
+              sprint_btn.text = "RUN" if not enabled else "RUN ON"
+              sprint_btn.tooltip_text = "Toggle sprint"
+              sprint_btn.modulate = Color.WHITE
+              _apply_mobile_button_style(sprint_btn, enabled, true)
+
+          """
+          hud = hud[:sprint_start] + sprint_fn + hud[sprint_end + 1:]
+
           hud_path.write_text(hud)
 
           docs = project / "docs"
           docs.mkdir(exist_ok=True)
-          (docs / "RENDERING_FIX_0.6.1.md").write_text(
-              "# Rendering and performance fix 0.6.1\n\n"
+          (docs / "RENDERING_FIX_0.6.2.md").write_text(
+              "# Rendering and performance fix 0.6.2\n\n"
               "Previous Android builds used Godot Mobile/Vulkan. Godot issue #115217 documents horizontal "
               "3D corruption on some Android GPU/driver combinations; Compatibility/OpenGL ES is a documented "
               "workaround. This build selects gl_compatibility for default and mobile rendering and runs a "
@@ -1423,7 +1607,11 @@ jobs:
           final_world = world_path.read_text()
           if "chunk_mesh_origin" not in final_world or "chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE)" not in final_world:
               raise SystemExit("Chunk-local-coordinate assertion failed")
-          print("Compatibility renderer selected; chunk coordinates localized; streaming and per-frame CPU work reduced.")
+          if "func _mesh_neighbour_block_id(" not in final_world:
+              raise SystemExit("Deterministic chunk-neighbour mesh lookup missing")
+          if "var neighbour_id := _mesh_neighbour_block_id(neighbour)" not in final_world:
+              raise SystemExit("Cube mesh seam-culling lookup missing")
+          print("Compatibility renderer selected; seam faces culled from deterministic world data; per-frame CPU work reduced.")
           PY
       - name: Import, smoke-test Compatibility renderer, and export Android APK
         shell: bash
@@ -1468,14 +1656,14 @@ jobs:
           cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
           echo "Headless startup and graphical Compatibility smoke tests passed."
           mkdir -p "$PROJECT_DIR/build"
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.1.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-0.6.2.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
           if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-export.log"; then
             echo "GDScript errors found during export; refusing to publish a broken APK."
             exit 1
           fi
-          test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.1.apk"
-          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.1.apk"
-          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.1-Source.zip" <<'PY'
+          test -s "$PROJECT_DIR/build/Flatworld-Creative-0.6.2.apk"
+          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-0.6.2.apk"
+          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.2-Source.zip" <<'PY'
           from pathlib import Path
           from zipfile import ZipFile, ZIP_DEFLATED
           import sys
@@ -1495,23 +1683,23 @@ jobs:
       - name: Publish Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.1-Android
-          path: source/Flatworld_Creative_Godot/build/Flatworld-Creative-0.6.1.apk
+          name: Flatworld-Creative-0.6.2-Android
+          path: source/Flatworld_Creative_Godot/build/Flatworld-Creative-0.6.2.apk
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish patched source project
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.1-Source
-          path: Flatworld-Creative-0.6.1-Source.zip
+          name: Flatworld-Creative-0.6.2-Source
+          path: Flatworld-Creative-0.6.2-Source.zip
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish Compatibility-rendered screenshot and logs
         uses: actions/upload-artifact@v4
         with:
-          name: Flatworld-Creative-0.6.1-Visual-Smoke
+          name: Flatworld-Creative-0.6.2-Visual-Smoke
           path: visual-artifacts/*
           if-no-files-found: error
           retention-days: 14
