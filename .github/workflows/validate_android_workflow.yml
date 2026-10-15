@@ -39,8 +39,12 @@ jobs:
               print(f"{path}: YAML parses. jobs={list(jobs)} steps={len(steps)}")
               for i, name in enumerate(names, 1):
                   print(f"{i:02d}. {name}")
-              if len([name for name in names if name.startswith("Import, smoke-test")]) != 1:
+              if len([name for name in names if name == "Import and export Android debug APK"]) != 1:
                   raise SystemExit(f"{path}: expected exactly one import/smoke-test/export step")
-              if len([name for name in names if name == "Publish Android APK"]) != 1:
+              if len([name for name in names if name == "Switch Android to OpenGL Compatibility and tune mobile rendering"]) != 1:
+                  raise SystemExit(f"{path}: expected exactly one Android Compatibility renderer step")
+              if len([name for name in names if name == "Publish OpenGL Compatibility screenshot and logs"]) != 1:
+                  raise SystemExit(f"{path}: expected exactly one graphical smoke artifact step")
+              if len([name for name in names if name == "Publish the APK as a workflow artifact"]) != 1:
                   raise SystemExit(f"{path}: expected exactly one APK publish step")
           PY
