@@ -907,7 +907,7 @@ jobs:
           plant_end = source.index('\nfunc _tile_uv_pixel', plant_start)
           plant = source[plant_start:plant_end]
           plant_uv_start = plant.find("            var face_uvs: Array[Vector2] = [")
-          plant_uv_end = plant.find("                  var normal := original_normal", plant_uv_start)
+          plant_uv_end = plant.find("            var normal := original_normal", plant_uv_start)
           if plant_uv_start < 0 or plant_uv_end < 0:
               raise SystemExit("Plant face UV section not found")
           new_plant_uv = '''            var face_uvs: Array[Vector2] = [
