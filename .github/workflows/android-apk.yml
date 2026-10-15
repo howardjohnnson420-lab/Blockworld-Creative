@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc46899e5a223b630488afcb4eaa.dl.dropboxusercontent.com/cd/0/get/DKGdVQ4OzyLDdPEcWK5xewpuDjMqwiYweEZaDPqt5sFBJrNBi7KXikPUCBGJZVoqGwR7UEovk3VSE8yHZrn8mGPjZTNmAZ3GM49niuglk5_R7PkmCJBhleSrwkWfogzbGonZuN7Oqu_npKV77722NA9XMOOC-v8wbbvCt6gRJ5V0cw/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://ucdb75a2d48f3ac2fe4bfec62315.dl.dropboxusercontent.com/cd/0/get/DKHvm0wD47chiZtPGJm5zx_VeVA-0Wsop0pM38LwUSEiIJfbJUV84pe5ibN-BnclOejtN9iG1UfCKLWT5Ga-a4qbIZLOc7iqo30xDx7Yx7dw5IMy0RkoAlEsMDN4XaGkZYsUNJzFt66j-lSNlSQ2qtQoCvuEg8Nkk8wEbwWqm-YTYw/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1215,19 +1215,16 @@ jobs:
           set -euo pipefail
           python3 - "$PROJECT_DIR" <<'PY'
           from pathlib import Path
-          import json
-          import random
-          import re
-          import sys
-          import subprocess
+          import json, random, re, subprocess, sys
 
           project = Path(sys.argv[1])
           world_path = project / "scripts/world.gd"
           world = world_path.read_text()
 
-          # Deterministic procedural neighbor lookup is crucial for chunk seams.
-          # get_block_id() intentionally reports air outside loaded chunks; using it in
-          # the mesher made both sides emit duplicate coplanar faces until streaming ended.
+          # Neighbours beyond the loaded block dictionary must be resolved from the
+          # deterministic base world inside the stream radius; treating them as air
+          # made chunk edges emit duplicate coplanar faces (z-fighting/stretched streaks).
+          helper_anchor = "func _base_cell_has_visible_face(cell: Vector3i, block_id: String) -> bool:"
           helper = """func _mesh_neighbour_block_id(cell: Vector3i) -> String:
               if cell.y < MIN_WORLD_Y or cell.y > MAX_WORLD_Y:
                   return "air"
@@ -1242,91 +1239,97 @@ jobs:
               return "air"
 
           """
-          helper_anchor = "func _base_cell_has_visible_face(cell: Vector3i, block_id: String) -> bool:"
           if "func _mesh_neighbour_block_id(cell: Vector3i) -> String:" not in world:
               if world.count(helper_anchor) != 1:
                   raise SystemExit("Mesh-neighbour helper insertion point missing")
               world = world.replace(helper_anchor, helper + helper_anchor, 1)
 
-          # Chunk nodes carry the large world coordinate; mesh vertices remain in local
-          # 0..16 coordinates. This avoids low-precision float errors far from origin.
+          # Cache block metadata used repeatedly during generation.
+          if "var _render_block_definition_cache: Dictionary = {}" not in world:
+              anchor = "var _generation_base_cache_active := false"
+              if world.count(anchor) != 1:
+                  raise SystemExit("Render definition cache field marker missing")
+              world = world.replace(anchor, anchor + "\nvar _render_block_definition_cache: Dictionary = {}", 1)
+          if "func _cached_render_definition(block_id: String) -> Dictionary:" not in world:
+              cached = """func _cached_render_definition(block_id: String) -> Dictionary:
+              if not _render_block_definition_cache.has(block_id):
+                  _render_block_definition_cache[block_id] = BlockRegistry.get_block(block_id)
+              return _render_block_definition_cache[block_id]
+
+          """
+              if world.count(helper_anchor) != 1:
+                  raise SystemExit("Cached render-definition helper marker missing")
+              world = world.replace(helper_anchor, cached + helper_anchor, 1)
+          visible_start = world.find(helper_anchor)
+          visible_end = world.find("\nfunc _write_generated_block", visible_start)
+          if visible_start < 0 or visible_end < 0:
+              raise SystemExit("Visible-face function boundaries missing")
+          visible = world[visible_start:visible_end]
+          visible = visible.replace("var definition := BlockRegistry.get_block(block_id)", "var definition := _cached_render_definition(block_id)", 1)
+          visible = visible.replace("var neighbour_def := BlockRegistry.get_block(neighbour_id)", "var neighbour_def := _cached_render_definition(neighbour_id)", 1)
+          local_dirs = "    var directions: Array[Vector3i] = [Vector3i.RIGHT, Vector3i.LEFT, Vector3i.UP, Vector3i.DOWN, Vector3i.BACK, Vector3i.FORWARD]\n"
+          visible = visible.replace(local_dirs, "", 1).replace("for direction in directions:", "for direction in DIRECTIONS:", 1)
+          world = world[:visible_start] + visible + world[visible_end:]
+
+          # Put each chunk node at its integer origin and store its mesh vertices relative
+          # to that origin. This retains precision after long travel into large coordinates.
           chunk_root_line = '    chunk_root.name = "Chunk_%d_%d" % [coord.x, coord.y]'
-          if world.count(chunk_root_line) != 1:
-              raise SystemExit("Chunk-root creation line missing")
+          if chunk_root_line not in world:
+              raise SystemExit("Chunk-root origin insertion marker missing")
           if "chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE)" not in world:
-              world = world.replace(
-                  chunk_root_line,
-                  chunk_root_line + '\n    chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE), 0.0, float(coord.y * CHUNK_SIZE))',
-                  1,
-              )
+              world = world.replace(chunk_root_line, chunk_root_line + '\n    chunk_root.position = Vector3(float(coord.x * CHUNK_SIZE), 0.0, float(coord.y * CHUNK_SIZE))', 1)
 
           mesh_start = world.find("func _rebuild_chunk_mesh(chunk_coord: Vector2i) -> void:")
           mesh_end = world.find("\nfunc _fluid_surface_height", mesh_start)
           if mesh_start < 0 or mesh_end < 0:
               raise SystemExit("Chunk mesh function boundaries missing")
           mesh = world[mesh_start:mesh_end]
-          old_neighbor = "var neighbour_id := get_block_id(neighbour)"
-          if old_neighbor in mesh:
-              mesh = mesh.replace(old_neighbor, "var neighbour_id := _mesh_neighbour_block_id(neighbour)", 1)
+          cube_neighbour = "var neighbour_id := get_block_id(neighbour)"
+          if cube_neighbour in mesh:
+              mesh = mesh.replace(cube_neighbour, "var neighbour_id := _mesh_neighbour_block_id(neighbour)", 1)
           elif "var neighbour_id := _mesh_neighbour_block_id(neighbour)" not in mesh:
-              raise SystemExit("Cube mesh neighbour lookup missing")
-
-          localize_anchor = "    if not was_generation_cache_active:"
+              raise SystemExit("Cube face neighbour lookup missing")
           if "var chunk_mesh_origin := Vector3(" not in mesh:
-              if mesh.count(localize_anchor) != 1:
-                  raise SystemExit("Mesh vertex-localization insertion point missing")
-              localize = (
+              marker = "    if not was_generation_cache_active:"
+              if mesh.count(marker) != 1:
+                  raise SystemExit("Chunk-local vertex conversion marker missing")
+              convert = (
                   "    var chunk_mesh_origin := Vector3(float(chunk_coord.x * CHUNK_SIZE), 0.0, float(chunk_coord.y * CHUNK_SIZE))\n"
                   "    for vertex_index in range(vertices.size()):\n"
                   "        vertices[vertex_index] = vertices[vertex_index] - chunk_mesh_origin\n"
                   "    for collision_index in range(collision_faces.size()):\n"
                   "        collision_faces[collision_index] = collision_faces[collision_index] - chunk_mesh_origin\n"
               )
-              mesh = mesh.replace(localize_anchor, localize + localize_anchor, 1)
+              mesh = mesh.replace(marker, convert + marker, 1)
           world = world[:mesh_start] + mesh + world[mesh_end:]
 
-          # All shaped-block, fence, and cube occlusion lookups use the same deterministic
-          # neighbour source, including blocks whose owning chunk is not materialized yet.
+          # Apply the same deterministic neighbour query to shaped blocks and fences.
           shape_start = world.find("func _append_shaped_block_geometry(")
           shape_end = world.find("\nfunc _fence_connects_to", shape_start)
           if shape_start < 0 or shape_end < 0:
-              raise SystemExit("Shaped-block helper boundaries missing")
-          shape = world[shape_start:shape_end]
-          shape_lookup = "neighbour_id = get_block_id(cell + DIRECTIONS[face_index])"
-          if shape_lookup in shape:
-              shape = shape.replace(shape_lookup, "neighbour_id = _mesh_neighbour_block_id(cell + DIRECTIONS[face_index])", 1)
-          elif "neighbour_id = _mesh_neighbour_block_id(cell + DIRECTIONS[face_index])" not in shape:
-              # Some variants assign a local variable rather than writing into neighbour_id.
-              alternate = "var neighbour_id := get_block_id(cell + DIRECTIONS[face_index])"
-              if alternate in shape:
-                  shape = shape.replace(alternate, "var neighbour_id := _mesh_neighbour_block_id(cell + DIRECTIONS[face_index])", 1)
-          world = world[:shape_start] + shape + world[shape_end:]
-
+              raise SystemExit("Shaped-block function boundaries missing")
+          shaped = world[shape_start:shape_end]
+          shaped = shaped.replace("neighbour_id = get_block_id(cell + DIRECTIONS[face_index])", "neighbour_id = _mesh_neighbour_block_id(cell + DIRECTIONS[face_index])", 1)
+          shaped = shaped.replace("var neighbour_id := get_block_id(cell + DIRECTIONS[face_index])", "var neighbour_id := _mesh_neighbour_block_id(cell + DIRECTIONS[face_index])", 1)
+          world = world[:shape_start] + shaped + world[shape_end:]
           fence_start = world.find("func _fence_connects_to(cell: Vector3i, direction: Vector3i) -> bool:")
           fence_end = world.find("\nfunc _box_face_is_internal", fence_start)
           if fence_start >= 0 and fence_end > fence_start:
-              fence = world[fence_start:fence_end]
-              fence = fence.replace("var neighbour_id := get_block_id(neighbour_cell)", "var neighbour_id := _mesh_neighbour_block_id(neighbour_cell)", 1)
+              fence = world[fence_start:fence_end].replace("var neighbour_id := get_block_id(neighbour_cell)", "var neighbour_id := _mesh_neighbour_block_id(neighbour_cell)", 1)
               world = world[:fence_start] + fence + world[fence_end:]
 
-          # Streaming: rebuild the new chunk immediately, enqueue neighbours, then do
-          # at most one dirty-neighbour remesh each frame. Avoid synchronous 5-mesh spikes.
+          # Build a neighbour remesh queue. Loading one chunk no longer synchronously
+          # rebuilds up to five expensive meshes in a single frame.
           if "var _stream_dirty_mesh_chunks: Dictionary = {}" not in world:
-              field_anchor = "var _generation_base_cache_active := false"
-              if world.count(field_anchor) != 1:
-                  raise SystemExit("Dirty-chunk queue field anchor missing")
-              world = world.replace(field_anchor, field_anchor + "\nvar _stream_dirty_mesh_chunks: Dictionary = {}", 1)
+              anchor = "var _generation_base_cache_active := false"
+              world = world.replace(anchor, anchor + "\nvar _stream_dirty_mesh_chunks: Dictionary = {}", 1)
           process_start = world.find("func _process(delta: float) -> void:")
           process_end = world.find("\nfunc generate_world", process_start)
           if process_start < 0 or process_end < 0:
-              raise SystemExit("World streaming process function boundaries missing")
+              raise SystemExit("World process function boundaries missing")
           process = world[process_start:process_end]
-          old_load_block = (
-              "            _load_chunk(coord)\n"
-              "            _refresh_chunk_and_neighbours(coord)\n"
-              "            generated_this_frame += 1"
-          )
-          new_load_block = (
+          old_stream = "            _load_chunk(coord)\n            _refresh_chunk_and_neighbours(coord)\n            generated_this_frame += 1"
+          new_stream = (
               "            _load_chunk(coord)\n"
               "            _rebuild_chunk_mesh(coord)\n"
               "            for offset in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:\n"
@@ -1335,27 +1338,27 @@ jobs:
               "                    _stream_dirty_mesh_chunks[dirty_coord] = true\n"
               "            generated_this_frame += 1"
           )
-          if old_load_block in process:
-              process = process.replace(old_load_block, new_load_block, 1)
-          elif "var dirty_coord: Vector2i = coord + offset" not in process:
-              raise SystemExit("Chunk streaming rebuild block missing")
-          dirty_flush = """    if not _stream_dirty_mesh_chunks.is_empty():
-              var dirty_keys := _stream_dirty_mesh_chunks.keys()
-              var dirty_chunk: Vector2i = dirty_keys[0]
-              _stream_dirty_mesh_chunks.erase(dirty_chunk)
-              if chunk_nodes.has(dirty_chunk):
-                  _rebuild_chunk_mesh(dirty_chunk)"""
+          if old_stream in process:
+              process = process.replace(old_stream, new_stream, 1)
+          elif "_stream_dirty_mesh_chunks[dirty_coord] = true" not in process:
+              raise SystemExit("Chunk-stream rebuild block missing")
           if "_stream_dirty_mesh_chunks.erase(dirty_chunk)" not in process:
-              process = process.rstrip() + "\n\n" + dirty_flush + "\n"
+              process = process.rstrip() + (
+                  "\n\n    if not _stream_dirty_mesh_chunks.is_empty():\n"
+                  "        var dirty_keys := _stream_dirty_mesh_chunks.keys()\n"
+                  "        var dirty_chunk: Vector2i = dirty_keys[0]\n"
+                  "        _stream_dirty_mesh_chunks.erase(dirty_chunk)\n"
+                  "        if chunk_nodes.has(dirty_chunk):\n"
+                  "            _rebuild_chunk_mesh(dirty_chunk)\n"
+              )
           world = world[:process_start] + process + world[process_end:]
 
-          # Skip per-frame deep copies of transient block state; gameplay time advances
-          # normally, but the maintenance tick runs at 10 Hz.
+          # Tick transient block state at 10 Hz instead of deep-copying it at display FPS.
           if "var _transient_tick_accumulator := 0.0" not in world:
-              tick_anchor = "var _block_light_scan_accumulator := 0.0"
-              if world.count(tick_anchor) != 1:
-                  raise SystemExit("Transient-state timer insertion point missing")
-              world = world.replace(tick_anchor, tick_anchor + "\nvar _transient_tick_accumulator := 0.0", 1)
+              anchor = "var _block_light_scan_accumulator := 0.0"
+              if world.count(anchor) != 1:
+                  raise SystemExit("Transient tick accumulator field marker missing")
+              world = world.replace(anchor, anchor + "\nvar _transient_tick_accumulator := 0.0", 1)
           if "_tick_transient_states(delta)" in world:
               world = world.replace(
                   "    _tick_transient_states(delta)",
@@ -1366,137 +1369,94 @@ jobs:
                   "        _tick_transient_states(transient_delta)",
                   1,
               )
-          elif "_tick_transient_states(transient_delta)" not in world:
-              raise SystemExit("Transient tick call marker missing")
 
-          # Avoid work that doesn't affect buried blocks: terrain biome noise is needed
-          # only for the surface layer, and cave checks reuse the column height already read.
+          # Keep the noisy biome query off the many underground voxel lookups.
           base_start = world.find("func _base_block_at_uncached(cell: Vector3i) -> String:")
           base_end = world.find("\nfunc _nether_block_at", base_start)
-          if base_start >= 0:
-              if base_end < 0:
-                  base_end = world.find("\nfunc _end_block_at", base_start)
-              if base_end < 0:
-                  base_end = world.find("\nfunc ", base_start + 1)
-              base_fn = world[base_start:base_end]
-              old_biome = "    var biome := get_biome_at(cell.x, cell.z)\n    if cell.y > terrain_height:"
-              if old_biome in base_fn:
-                  base_fn = base_fn.replace(old_biome, "    if cell.y > terrain_height:", 1)
-                  surface_marker = "    if cell.y < terrain_height - 1:"
-                  if surface_marker not in base_fn:
-                      raise SystemExit("Surface biome insertion marker missing")
-                  base_fn = base_fn.replace(surface_marker, "    var biome := get_biome_at(cell.x, cell.z)\n" + surface_marker, 1)
+          if base_start < 0:
+              raise SystemExit("Base-world function missing")
+          if base_end < 0:
+              base_end = world.find("\nfunc ", base_start + 1)
+          base_fn = world[base_start:base_end]
+          old_biome = "    var biome := get_biome_at(cell.x, cell.z)\n    if cell.y > terrain_height:"
+          if old_biome in base_fn:
+              base_fn = base_fn.replace(old_biome, "    if cell.y > terrain_height:", 1)
+              surface_marker = "    if cell.y < terrain_height - 1:"
+              if surface_marker not in base_fn:
+                  raise SystemExit("Biome query relocation point missing")
+              base_fn = base_fn.replace(surface_marker, "    var biome := get_biome_at(cell.x, cell.z)\n" + surface_marker, 1)
               world = world[:base_start] + base_fn + world[base_end:]
 
-          replacements = [
+          cave_calls = [
               ("if _is_cave_cell(cell):", "if _is_cave_cell(cell, terrain_height):"),
               ("if cell.y < floor_height - 4 and _is_cave_cell(cell):", "if cell.y < floor_height - 4 and _is_cave_cell(cell, floor_height):"),
               ("if cell.y < surface - 4 and _is_cave_cell(cell):", "if cell.y < surface - 4 and _is_cave_cell(cell, surface):"),
               ("func _is_cave_cell(cell: Vector3i) -> bool:", "func _is_cave_cell(cell: Vector3i, terrain_height: int) -> bool:"),
               ("if cell.y < MIN_WORLD_Y + 6 or cell.y > _terrain_height_at(cell.x, cell.z) - 5:", "if cell.y < MIN_WORLD_Y + 6 or cell.y > terrain_height - 5:"),
           ]
-          for old, new in replacements:
+          for old, new in cave_calls:
               if old in world:
                   world = world.replace(old, new, 1)
           if "func _is_cave_cell(cell: Vector3i, terrain_height: int) -> bool:" not in world:
-              raise SystemExit("Terrain-height cave optimization was not applied")
-
-          # Metadata is requested repeatedly in the face-visibility hot path. Cache it
-          # by block ID and reuse the module-level direction array instead of allocating.
-          if "var _render_block_definition_cache: Dictionary = {}" not in world:
-              anchor = "var _generation_base_cache_active := false"
-              if world.count(anchor) != 1:
-                  raise SystemExit("Render-definition cache field anchor missing")
-              world = world.replace(anchor, anchor + "\nvar _render_block_definition_cache: Dictionary = {}", 1)
-          if "func _cached_render_definition(block_id: String) -> Dictionary:" not in world:
-              helper = """func _cached_render_definition(block_id: String) -> Dictionary:
-              if not _render_block_definition_cache.has(block_id):
-                  _render_block_definition_cache[block_id] = BlockRegistry.get_block(block_id)
-              return _render_block_definition_cache[block_id]
-
-          """
-              if world.count(helper_anchor) != 1:
-                  raise SystemExit("Cached render-definition helper insertion point missing")
-              world = world.replace(helper_anchor, helper + helper_anchor, 1)
-          visible_start = world.find(helper_anchor)
-          visible_end = world.find("\nfunc _write_generated_block", visible_start)
-          if visible_start < 0 or visible_end < 0:
-              raise SystemExit("Visible-face helper boundaries missing")
-          visible = world[visible_start:visible_end]
-          visible = visible.replace("var definition := BlockRegistry.get_block(block_id)", "var definition := _cached_render_definition(block_id)", 1)
-          visible = visible.replace("var neighbour_def := BlockRegistry.get_block(neighbour_id)", "var neighbour_def := _cached_render_definition(neighbour_id)", 1)
-          directions = "    var directions: Array[Vector3i] = [Vector3i.RIGHT, Vector3i.LEFT, Vector3i.UP, Vector3i.DOWN, Vector3i.BACK, Vector3i.FORWARD]\n"
-          visible = visible.replace(directions, "", 1)
-          visible = visible.replace("for direction in directions:", "for direction in DIRECTIONS:", 1)
-          world = world[:visible_start] + visible + world[visible_end:]
-
-          # Move cutout pixels on foliage faces away from tile borders. In the original
-          # atlas, many transparent pixels sit in the bottom rows; repeating the tile
-          # on every block face forms visible horizontal bands through entire canopies.
-          atlas_path = project / "assets/textures/atlas.png"
-          map_path = project / "assets/textures/atlas_map.json"
-          try:
-              from PIL import Image
-          except ImportError:
-              raise SystemExit("Pillow must be available before repairing leaf alpha masks")
-          atlas = Image.open(atlas_path).convert("RGBA")
-          atlas_map = json.loads(map_path.read_text())
-          leaf_ids = [key for key in atlas_map["tiles"] if "leaves" in key]
-          if not leaf_ids:
-              raise SystemExit("No leaf texture slots were found in atlas_map.json")
-          transparent_moved = 0
-          for block_id in leaf_ids:
-              faces = atlas_map["tiles"][block_id]
-              for face_name, slot in faces.items():
-                  x0, y0 = int(slot["x"]), int(slot["y"])
-                  tile = atlas.crop((x0, y0, x0 + 16, y0 + 16))
-                  pixels = list(tile.getdata())
-                  zeros = [i for i, rgba in enumerate(pixels) if rgba[3] == 0]
-                  if not zeros:
-                      continue
-                  count = len(zeros)
-                  seed = sum((i + 1) * ord(char) for i, char in enumerate(block_id + "/" + face_name))
-                  rng = random.Random(seed)
-                  candidates = [(x, y) for y in range(1, 15) for x in range(1, 15)]
-                  rng.shuffle(candidates)
-                  chosen = []
-                  for x, y in candidates:
-                      if all(max(abs(x - ax), abs(y - ay)) > 1 for ax, ay in chosen):
-                          chosen.append((x, y))
-                          if len(chosen) == count:
-                              break
-                  if len(chosen) != count:
-                      raise SystemExit(f"Couldn't distribute {count} cutout pixels for {block_id}/{face_name}")
-                  # Preserve every RGB pixel. Only redistribute alpha-zero positions.
-                  rgba = list(tile.getdata())
-                  for i, item in enumerate(rgba):
-                      if item[3] == 0:
-                          rgba[i] = (item[0], item[1], item[2], 255)
-                  for x, y in chosen:
-                      i = y * 16 + x
-                      rgba[i] = (rgba[i][0], rgba[i][1], rgba[i][2], 0)
-                  tile.putdata(rgba)
-                  atlas.paste(tile, (x0, y0))
-                  transparent_moved += count
-                  # A cutout texture must not contain transparent border rows/columns.
-                  for edge in (list(range(16)) + [y * 16 for y in range(16)] + [y * 16 + 15 for y in range(16)] + list(range(240, 256))):
-                      if tile.getpixel((edge % 16, edge // 16))[3] == 0:
-                          raise SystemExit(f"Transparent outer-edge pixel remains in {block_id}/{face_name}")
-          atlas.save(atlas_path)
-          subprocess.run([sys.executable, str(project / "tools/rebuild_block_textures_from_atlas.py")], check=True, stdout=subprocess.PIPE, text=True)
+              raise SystemExit("Height-parameterized cave test missing")
 
           world_path.write_text(world)
 
-          # Brighten the new-world default only; saved-world time is unchanged.
+          # Repair the atlas leaf cutout masks. The original alpha-zero pixels clustered
+          # in the top/bottom texel rows, so repeating them per voxel created horizontal
+          # transparent streaks across canopies. Keep the alpha count but scatter holes
+          # into the interior and leave every tile edge opaque.
+          from PIL import Image
+          atlas_path = project / "assets/textures/atlas.png"
+          atlas_map_path = project / "assets/textures/atlas_map.json"
+          atlas = Image.open(atlas_path).convert("RGBA")
+          atlas_map = json.loads(atlas_map_path.read_text())
+          leaf_ids = [block_id for block_id in atlas_map["tiles"] if "leaves" in block_id]
+          if not leaf_ids:
+              raise SystemExit("No leaves tile entries in atlas map")
+          moved = 0
+          for block_id in leaf_ids:
+              for face, slot in atlas_map["tiles"][block_id].items():
+                  x0, y0 = int(slot["x"]), int(slot["y"])
+                  tile = atlas.crop((x0, y0, x0 + 16, y0 + 16))
+                  data = list(tile.getdata())
+                  holes = sum(1 for pixel in data if pixel[3] == 0)
+                  if holes == 0:
+                      continue
+                  seed = sum((i + 1) * ord(ch) for i, ch in enumerate(block_id + "/" + face))
+                  candidates = [(x, y) for y in range(1, 15) for x in range(1, 15)]
+                  random.Random(seed).shuffle(candidates)
+                  selected = []
+                  for x, y in candidates:
+                      if all(abs(x - ax) + abs(y - ay) > 1 for ax, ay in selected):
+                          selected.append((x, y))
+                          if len(selected) == holes:
+                              break
+                  if len(selected) != holes:
+                      raise SystemExit(f"Could not distribute leaf holes for {block_id}/{face}")
+                  for i, pixel in enumerate(data):
+                      if pixel[3] == 0:
+                          data[i] = (pixel[0], pixel[1], pixel[2], 255)
+                  for x, y in selected:
+                      i = y * 16 + x
+                      data[i] = (data[i][0], data[i][1], data[i][2], 0)
+                  tile.putdata(data)
+                  atlas.paste(tile, (x0, y0))
+                  moved += holes
+                  border = list(range(16)) + list(range(240, 256)) + [y * 16 for y in range(16)] + [y * 16 + 15 for y in range(16)]
+                  if any(tile.getpixel((i % 16, i // 16))[3] == 0 for i in border):
+                      raise SystemExit(f"Leaf edge still has transparent pixels: {block_id}/{face}")
+          atlas.save(atlas_path)
+          subprocess.run([sys.executable, str(project / "tools/rebuild_block_textures_from_atlas.py")], check=True, stdout=subprocess.PIPE, text=True)
+
+          # New worlds default to daytime for a useful visual test; saved worlds keep their time.
           main_path = project / "scripts/main.gd"
           main = main_path.read_text()
-          old_time = 'saved.get("day_time", 1000.0)'
-          if old_time in main:
-              main = main.replace(old_time, 'saved.get("day_time", 6000.0)', 1)
+          main = main.replace('saved.get("day_time", 1000.0)', 'saved.get("day_time", 6000.0)', 1)
           main_path.write_text(main)
 
-          # UI: Bedrock-style square translucent controls, hearts/food over hotbar,
-          # and no per-frame reallocation of button styles when sprint is unchanged.
+          # Improve mobile controls with labeled tap targets and a Bedrock-like button
+          # surface; the sprint setter no longer rebuilds theme resources every frame.
           hud_path = project / "scripts/mobile_hud.gd"
           hud = hud_path.read_text()
           hud = hud.replace('_make_button("⛏", "BreakButton"', '_make_button("BREAK", "BreakButton"', 1)
@@ -1509,14 +1469,23 @@ jobs:
           hud = hud.replace("Color(0.055, 0.065, 0.078, 0.38)", "Color(0.28, 0.30, 0.30, 0.52)", 1)
           hud = hud.replace("Color(0.86, 0.89, 0.92, 0.36)", "Color(0.03, 0.04, 0.04, 0.94)", 1)
           if "normal.shadow_size = 2" not in hud:
-              border_anchor = "    normal.content_margin_bottom = 2.0"
-              if border_anchor in hud:
-                  hud = hud.replace(border_anchor, border_anchor + "\n    normal.shadow_color = Color(0.0, 0.0, 0.0, 0.55)\n    normal.shadow_size = 2\n    normal.shadow_offset = Vector2(0, 2)", 1)
+              anchor = "    normal.content_margin_bottom = 2.0"
+              if anchor in hud:
+                  hud = hud.replace(anchor, anchor + "\n    normal.shadow_color = Color(0.0, 0.0, 0.0, 0.55)\n    normal.shadow_size = 2\n    normal.shadow_offset = Vector2(0, 2)", 1)
           if "var _sprint_style_enabled := false" not in hud:
-              sprint_member = "var _sprint_enabled := false"
-              if sprint_member not in hud:
-                  raise SystemExit("Sprint style state insertion point missing")
-              hud = hud.replace(sprint_member, sprint_member + "\nvar _sprint_style_enabled := false", 1)
+              state_anchor = "var _sprint_enabled := false"
+              if state_anchor not in hud:
+                  raise SystemExit("Sprint style variable marker missing")
+              hud = hud.replace(state_anchor, state_anchor + "\nvar _sprint_style_enabled := false", 1)
+
+          def replace_function(source, signature, body):
+              start = source.find(signature)
+              if start < 0:
+                  raise SystemExit("HUD function missing: " + signature)
+              end = source.find("\nfunc ", start + len(signature))
+              if end < 0:
+                  raise SystemExit("No next function boundary after: " + signature)
+              return source[:start] + body.rstrip() + "\n\n" + source[end + 1:]
 
           sprint_body = """func set_sprint_text(enabled: bool) -> void:
               _sprint_enabled = enabled
@@ -1529,33 +1498,21 @@ jobs:
               sprint_btn.modulate = Color.WHITE
               _apply_mobile_button_style(sprint_btn, enabled, true)
           """
-          def replace_function(source, signature, body):
-              start = source.find(signature)
-              if start < 0:
-                  raise SystemExit("Function to replace missing: " + signature)
-              end = source.find("\nfunc ", start + len(signature))
-              if end < 0:
-                  raise SystemExit("Following function boundary missing after " + signature)
-              return source[:start] + body.rstrip() + "\n\n" + source[end + 1:]
-
           hud = replace_function(hud, "func set_sprint_text(enabled: bool) -> void:", sprint_body)
-
           health_body = """func set_health(health: int, hunger: int) -> void:
               if health_label == null:
                   return
               var hearts := ""
               var food := ""
               for i in range(10):
-                  var heart_units := health - i * 2
-                  hearts += "♥" if heart_units >= 2 else "♡"
-                  var food_units := hunger - i * 2
-                  food += "◆" if food_units >= 2 else "◇"
+                  hearts += "♥" if health - i * 2 >= 2 else "♡"
+                  food += "◆" if hunger - i * 2 >= 2 else "◇"
               health_label.text = hearts + "   " + food
           """
           hud = replace_function(hud, "func set_health(health: int, hunger: int) -> void:", health_body)
           hud_path.write_text(hud)
 
-          # Export preset and project version must match the displayed source/package.
+          # Record the matching app version and Android versionCode.
           project_settings = project / "project.godot"
           settings = project_settings.read_text()
           settings = re.sub(r'(?m)^config/version=.*
@@ -1715,10 +1672,8 @@ jobs:
           project_settings.write_text(settings)
           preset_path = project / "export_presets.cfg"
           preset = preset_path.read_text()
-          if re.search(r"(?m)^version/code=\d+$", preset):
-              preset = re.sub(r"(?m)^version/code=\d+$", "605", preset, count=1)
-          if re.search(r"(?m)^version/name=.*$", preset):
-              preset = re.sub(r'(?m)^version/name=.*
+          preset = re.sub(r"(?m)^version/code=\d+$", "605", preset, count=1)
+          preset = re.sub(r'(?m)^version/name=.*
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -1874,17 +1829,17 @@ jobs:
 , 'version/name="0.6.5"', preset, count=1)
           preset_path.write_text(preset)
 
-          # Gate the build on the key fixes being present.
-          world_check = world_path.read_text()
-          if "chunk_mesh_origin" not in world_check or "_mesh_neighbour_block_id(neighbour)" not in world_check:
-              raise SystemExit("Chunk-local precision or deterministic seam lookup missing")
-          if "_stream_dirty_mesh_chunks.erase(dirty_chunk)" not in world_check:
-              raise SystemExit("Deferred neighbor rebuild queue missing")
-          if transparent_moved == 0:
-              raise SystemExit("Leaf cutout masks were not repaired")
+          # Fail closed if the important repairs aren't present before Godot compiles.
+          check_world = world_path.read_text()
+          if "chunk_mesh_origin" not in check_world or "_mesh_neighbour_block_id(neighbour)" not in check_world:
+              raise SystemExit("Local coordinate/seam fix missing")
+          if "_stream_dirty_mesh_chunks.erase(dirty_chunk)" not in check_world:
+              raise SystemExit("Queued remesh optimization missing")
+          if moved < 1:
+              raise SystemExit("Leaf alpha mask correction did not run")
           if 'renderer/rendering_method="gl_compatibility"' not in project_settings.read_text():
-              raise SystemExit("OpenGL Compatibility render setting missing")
-          print(f"Local chunk coordinates + deterministic seam culling + deferred remesh + cached metadata + {transparent_moved} scattered leaf cutout pixels + Minecraft-style HUD.")
+              raise SystemExit("GL Compatibility renderer setting missing")
+          print(f"Mesh seams fixed, chunk-local vertices enabled, {moved} leaf cutout pixels redistributed.")
           PY
       - name: Set up Java for Godot Android export
         uses: actions/setup-java@v4
