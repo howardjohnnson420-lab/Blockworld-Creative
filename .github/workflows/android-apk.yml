@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc3797871ba75fe6b59e4c7f2f02.dl.dropboxusercontent.com/cd/0/get/DKGG12GAUKoQJs_POJBKv4eEaqHtJcUYjy9lBKIQFSv1brrECmDHraR1RmwULT0jHt5DBGrI8F6za-STF1Xz50mYKKkgKLtEfjAvm215BT-VlLQt_TW_KHZJ2Y8OhW1EWXncZiqSSrfGAazBraDswrRJhL0KnU7PptRg-npFlYo8cA/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uca47afea58777072ec26fd33bfe.dl.dropboxusercontent.com/cd/0/get/DKGZUR1z8fR5nP_LuvYFGwbMojHMTwft--EisC88dorxBan25FdTdRRrxCKWWpAS58--kCgAc8RMu24ZcehGwbGvojQ2MJVEyLx8eTkJ5-MZ10MzY4lke3TOiYULgs3Zjgq7RawrDw5BLIlxIUGmU7X8VX8QXWxOBFUF7hurwjGEBg/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -70,6 +70,39 @@ jobs:
               else:
                   raise SystemExit("Could not find _cell_key insertion point in scripts/main.gd")
               script.write_text("\n".join(lines) + "\n")
+          PY
+          python3 - "$PROJECT_DIR/scripts/world.gd" "$PROJECT_DIR/scripts/mobile_hud.gd" <<'PY'
+          from pathlib import Path
+          import sys
+          world = Path(sys.argv[1])
+          lines = world.read_text().splitlines()
+          for i, line in enumerate(lines):
+              if line.startswith("func _base_cell_has_visible_face("):
+                  j = i + 1
+                  while j < len(lines) and lines[j] != "    return false":
+                      j += 1
+                  orphan = [
+                      "    _generate_chunk_vegetation(coord)",
+                      "    _generate_camp_piece_for_chunk(coord)",
+                      "    _apply_chunk_modifications(coord)",
+                      "    _generated_chunk_count += 1",
+                  ]
+                  if lines[j + 1:j + 1 + len(orphan)] == orphan:
+                      del lines[j + 1:j + 1 + len(orphan)]
+                  break
+          replacements = {
+              '    var leaves_id := ["red_poplar_leaves", "orange_poplar_leaves", "yellow_poplar_leaves"][rng.randi_range(0, 2)]': '    var leaves_id: String = ["red_poplar_leaves", "orange_poplar_leaves", "yellow_poplar_leaves"][rng.randi_range(0, 2)]',
+              '            var target := cell + direction': '            var target: Vector3i = cell + direction',
+              '                var neighbour := cell + direction': '                var neighbour: Vector3i = cell + direction',
+              '        var affected := coord + offset': '        var affected: Vector2i = coord + offset',
+              '            var face_shade := [0.82, 0.82, 1.0, 0.58, 0.74, 0.74][face_index]': '            var face_shade: float = [0.82, 0.82, 1.0, 0.58, 0.74, 0.74][face_index]',
+              '                var face_shade := [0.82, 0.82, 1.0, 0.58, 0.74, 0.74][face_index]': '                var face_shade: float = [0.82, 0.82, 1.0, 0.58, 0.74, 0.74][face_index]',
+          }
+          lines = [replacements.get(line, line) for line in lines]
+          world.write_text("\n".join(lines) + "\n")
+          hud = Path(sys.argv[2])
+          hud_source = hud.read_text().replace("class VirtualJoystick extends Control:", "class MobileVirtualJoystick extends Control:").replace("VirtualJoystick.new()", "MobileVirtualJoystick.new()")
+          hud.write_text(hud_source)
           PY
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
@@ -131,9 +164,17 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --import --quit
+          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --import --quit 2>&1 | tee "$RUNNER_TEMP/godot-import.log"
+          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-import.log"; then
+            echo "GDScript errors found during import; refusing to publish a broken APK."
+            exit 1
+          fi
           mkdir -p "$PROJECT_DIR/build"
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-debug.apk"
+          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-debug.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
+          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-export.log"; then
+            echo "GDScript errors found during export; refusing to publish a broken APK."
+            exit 1
+          fi
           test -s "$PROJECT_DIR/build/Flatworld-Creative-debug.apk"
           ls -lh "$PROJECT_DIR/build/Flatworld-Creative-debug.apk"
 
