@@ -1088,19 +1088,16 @@ jobs:
           if source.count(light_anchor) != 1:
               raise SystemExit("Potential light-source constant anchor missing")
           source = source.replace(light_anchor, light_anchor + "\n" + light_constant, 1)
-          old_loop = """    for raw_cell in blocks.keys():
-              var cell: Vector3i = raw_cell
-              var block_id := str(blocks[raw_cell])
-              var emission := _emission_for_block(cell, block_id)"""
-          new_loop = """    for raw_cell in blocks.keys():
-              var block_id := str(blocks[raw_cell])
-              if not POTENTIAL_LIGHT_SOURCE_IDS.has(block_id):
-                  continue
-              var cell: Vector3i = raw_cell
-              var emission := _emission_for_block(cell, block_id)"""
-          if source.count(old_loop) != 1:
-              raise SystemExit("Point-light scan loop anchor missing")
-          source = source.replace(old_loop, new_loop, 1)
+          emission_line = "        var emission := _emission_for_block(cell, block_id)"
+          if source.count(emission_line) != 1:
+              raise SystemExit("Point-light emission line anchor missing")
+          source = source.replace(
+              emission_line,
+              "        if not POTENTIAL_LIGHT_SOURCE_IDS.has(block_id):\n"
+              "            continue\n"
+              + emission_line,
+              1,
+          )
           source = source.replace("const BLOCK_LIGHT_SCAN_INTERVAL := 0.75", "const BLOCK_LIGHT_SCAN_INTERVAL := 1.5", 1)
 
           path.write_text(source)
