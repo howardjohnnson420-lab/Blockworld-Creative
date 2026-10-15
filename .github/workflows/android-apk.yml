@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc7e088fe69269752222afad3bd5.dl.dropboxusercontent.com/cd/0/get/DKE4rzuhljN-57ay8NRrHUsu2wieB0sa04nhLqmLNMyCEOuCfcBf2ADejcCrCzn9lJdo8kjv0QxHZC9mTlKG4-0o7LLm0CwSuJapDYLrljpeHuPUG4xxM8QiCV8rU-epXornMEJJFslxVX5uUIZVLf2K5i0QcxlH4EyHCSLLKzzM_A/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uc849a150c329043e6aab6718afc.dl.dropboxusercontent.com/cd/0/get/DKG0yPugwhle33_QEV-SX6m4oOH5Qom1zhzZChVDwayjGqu5eSLEEHYRDw21dYIKkVxvhsBjez9Ff8vlbkZtCAlDDWB2lEm7ORhs7KN1yDW9mTSqpnUwhAJ-Ll60OsFEJ-KS9jswxqaTLMbVOlclZzPiKl_Iea39HvMx4XPKHeFPVg/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1104,7 +1104,7 @@ jobs:
           (project / "VERSION.txt").write_text("0.5.9\n")
           print(f"Fixed {changed} quad index sites and optimized repeated base-block/light-source work.")
           PY
-      - name: Switch Android to Compatibility renderer and improve mobile UI/performance
+      - name: Switch Android to OpenGL Compatibility and tune mobile rendering
         shell: bash
         run: |
           set -euo pipefail
@@ -1113,305 +1113,59 @@ jobs:
           import re, sys
 
           project = Path(sys.argv[1])
-
-          # Confirmed Godot bug #115217/#123370: horizontal raster lines/flicker on
-          # some Android Vulkan Mobile GPU/driver combinations. GL Compatibility
-          # uses OpenGL ES, avoiding the affected Vulkan Mobile path altogether.
           settings_path = project / "project.godot"
           settings = settings_path.read_text()
 
-          def set_godot_setting(text, section, key, value):
-              header = "[" + section + "]"
-              if header not in text:
-                  text = text.rstrip() + "\n\n" + header + "\n" + key + "=" + value + "\n"
-                  return text
-              start = text.index(header)
-              end = re.search(r"(?m)^\[.+\]\s*$", text[start + len(header):])
-              end_at = start + len(header) + end.start() if end else len(text)
-              block = text[start:end_at]
+          # Godot issue #115217 and duplicate #123370 report these same screen-wide
+          # horizontal pixel lines on Android Vulkan Mobile, including 4.7.2.
+          # Use OpenGL ES Compatibility on Android to avoid that Vulkan render path.
+          for key in ("renderer/rendering_method", "renderer/rendering_method.mobile"):
               pattern = re.compile(r"(?m)^" + re.escape(key) + r"\s*=.*$")
-              if pattern.search(block):
-                  block = pattern.sub(key + "=" + value, block, count=1)
+              line = key + '="gl_compatibility"'
+              if pattern.search(settings):
+                  settings = pattern.sub(line, settings, count=1)
               else:
-                  block = block.rstrip() + "\n" + key + "=" + value + "\n"
-              return text[:start] + block + text[end_at:]
-
-          settings = set_godot_setting(settings, "rendering", "renderer/rendering_method", '"gl_compatibility"')
-          settings = set_godot_setting(settings, "rendering", "renderer/rendering_method.mobile", '"gl_compatibility"')
-          settings = set_godot_setting(settings, "application", "config/version", '"0.6.0"')
+                  section = "[rendering]"
+                  if section not in settings:
+                      settings += "\n[rendering]\n"
+                  settings = settings.replace(section + "\n", section + "\n" + line + "\n", 1)
           settings_path.write_text(settings)
           (project / "VERSION.txt").write_text("0.6.0\n")
 
-          # Raise Android's version code so the new candidate is not mistaken for the old APK.
-          preset_path = project / "export_presets.cfg"
-          preset = preset_path.read_text()
-          version_code = re.search(r"(?m)^version/code=(\d+)$", preset)
-          if version_code:
-              preset = preset[:version_code.start(1)] + str(int(version_code.group(1)) + 1) + preset[version_code.end(1):]
-          preset = re.sub(r'(?m)^version/name=.*
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          accept-android-sdk-licenses: true
-          packages: "platform-tools platforms;android-35 platforms;android-36 build-tools;35.0.0 build-tools;36.0.0"
-
-      - name: Install Python texture-generation dependency
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Restore deterministic texture files in the build workspace
-        run: |
-          python -m pip install --disable-pip-version-check Pillow
-          python "$PROJECT_DIR/tools/rebuild_block_textures_from_atlas.py"
-
-      - name: Download Godot 4.7.2 and matching Android export templates
-        run: |
-          set -euo pipefail
-          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"             --output "$RUNNER_TEMP/godot.zip"
-          mkdir -p "$RUNNER_TEMP/godot"
-          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
-          GODOT_BIN="$(find "$RUNNER_TEMP/godot" -type f -name 'Godot_v4.7.2-stable_linux.x86_64' -print -quit)"
-          test -n "$GODOT_BIN"
-          chmod +x "$GODOT_BIN"
-          echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
-          curl --fail --location --show-error             "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"             --output "$RUNNER_TEMP/godot-templates.tpz"
-          mkdir -p "$RUNNER_TEMP/templates" "$HOME/.local/share/godot/export_templates/4.7.2.stable"
-          unzip -q "$RUNNER_TEMP/godot-templates.tpz" -d "$RUNNER_TEMP/templates"
-          if [ -d "$RUNNER_TEMP/templates/templates" ]; then
-            cp -a "$RUNNER_TEMP/templates/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
-          else
-            cp -a "$RUNNER_TEMP/templates/." "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
-          fi
-          printf '4.7.2.stable' > "$HOME/.local/share/godot/export_templates/4.7.2.stable/version.txt"
-          "$GODOT_BIN" --version
-
-      - name: Configure Godot Android SDK paths
-        run: |
-          mkdir -p "$HOME/.config/godot"
-          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
-          [gd_resource type="EditorSettings" format=3]
-
-          [resource]
-          export/android/android_sdk_path = "$ANDROID_HOME"
-          export/android/java_sdk_path = "$JAVA_HOME"
-          EOF
-
-      - name: Import and export Android debug APK
-        working-directory: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          "$GODOT_BIN" --headless --editor --path "$PROJECT_DIR" --import --quit 2>&1 | tee "$RUNNER_TEMP/godot-import.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-import.log"; then
-            echo "GDScript errors found during import; refusing to publish a broken APK."
-            exit 1
-          fi
-          echo "Running a headless main-scene startup smoke test..."
-          timeout 120s "$GODOT_BIN" --headless --path "$PROJECT_DIR" --quit-after 3 2>&1 | tee "$RUNNER_TEMP/godot-runtime.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-runtime.log"; then
-            echo "Runtime startup errors detected; refusing to publish this APK."
-            exit 1
-          fi
-          if ! grep -q "Flatworld startup: touch HUD created" "$RUNNER_TEMP/godot-runtime.log"; then
-            echo "The main scene did not finish creating the player and touch HUD."
-            exit 1
-          fi
-          if ! grep -q "Flatworld spawn invariant:" "$RUNNER_TEMP/godot-runtime.log"; then
-            echo "Spawn surface invariant was not logged."
-            exit 1
-          fi
-          # Render a real frame with Mesa software OpenGL in CI, save it for inspection,
-          # and reject a black/empty framebuffer. This tests the chosen Compatibility renderer,
-          # whereas the headless test above only validates gameplay startup and scripts.
-          mkdir -p "$RUNNER_TEMP/visual" "$GITHUB_WORKSPACE/visual-artifacts"
-          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq xvfb ffmpeg
-          fi
-          timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 50 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Graphical Compatibility startup reported a Godot error."
-            exit 1
-          fi
-          if ! grep -Eqi "OpenGL API|OpenGL ES" "$RUNNER_TEMP/godot-visual.log"; then
-            echo "Graphical smoke test did not report OpenGL/Compatibility."
-            exit 1
-          fi
-          test -s "$RUNNER_TEMP/visual/compatibility-smoke.avi"
-          ffmpeg -y -loglevel error -ss 3 -i "$RUNNER_TEMP/visual/compatibility-smoke.avi" -frames:v 1 "$RUNNER_TEMP/visual/compatibility-smoke.png"
-          test -s "$RUNNER_TEMP/visual/compatibility-smoke.png"
-          python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" <<'PY'
-          from PIL import Image, ImageStat
-          import sys
-          image = Image.open(sys.argv[1]).convert("RGB")
-          stats = ImageStat.Stat(image)
-          mean = sum(stats.mean) / 3.0
-          variance = sum(stats.stddev) / 3.0
-          visible_ratio = sum(1 for r, g, b in image.getdata() if max(r, g, b) > 24) / (image.width * image.height)
-          print(f"Compatibility frame stats: mean_rgb={mean:.2f}, channel_stddev={variance:.2f}, non_dark={visible_ratio:.1%}")
-          if mean < 18.0 or variance < 8.0 or visible_ratio < 0.10:
-              raise SystemExit("Rendered frame is blank/near-black; refusing to publish.")
-          PY
-          cp "$RUNNER_TEMP/visual/compatibility-smoke.png" "$GITHUB_WORKSPACE/visual-artifacts/compatibility-smoke.png"
-          cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
-          echo "Headless startup smoke test passed."
-          mkdir -p "$PROJECT_DIR/build"
-          "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-debug.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
-          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script" "$RUNNER_TEMP/godot-export.log"; then
-            echo "GDScript errors found during export; refusing to publish a broken APK."
-            exit 1
-          fi
-          test -s "$PROJECT_DIR/build/Flatworld-Creative-debug.apk"
-          ls -lh "$PROJECT_DIR/build/Flatworld-Creative-debug.apk"
-          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.0-Source.zip" <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile, ZIP_DEFLATED
-          import sys
-          project = Path(sys.argv[1])
-          output = Path(sys.argv[2])
-          with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=6) as archive:
-              for path in project.rglob("*"):
-                  if not path.is_file():
-                      continue
-                  relative = path.relative_to(project)
-                  if ".godot" in relative.parts or "build" in relative.parts:
-                      continue
-                  archive.write(path, Path(project.name) / relative)
-          print(f"Packaged matching source project ({output.stat().st_size} bytes).")
-          PY
-
-      - name: Publish the patched source project
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.0-Source
-          path: Flatworld-Creative-0.6.0-Source.zip
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish graphical Compatibility smoke test
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-0.6.0-Visual-Smoke
-          path: visual-artifacts/*
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish the APK as a workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Flatworld-Creative-debug-APK
-          path: ${{ env.PROJECT_DIR }}/build/Flatworld-Creative-debug.apk
-          if-no-files-found: error
-          retention-days: 14
-, 'version/name="0.6.0"', preset, count=1)
-          preset_path.write_text(preset)
-
-          # Dictionary.get(key, expensive_terrain_call()) eagerly evaluates the call in
-          # GDScript. Avoid recomputing terrain-noise heights when the cache already has
-          # the column, both in base block queries and surface queries.
+          # Fix an actual CPU hot path: get(key, _terrain_height_at(...)) eagerly
+          # computes the terrain even when the surface-height dictionary has the key.
           world_path = project / "scripts/world.gd"
           world = world_path.read_text()
-          old_height = "    var terrain_height := int(surface_heights.get(Vector2i(cell.x, cell.z), _terrain_height_at(cell.x, cell.z)))"
-          new_height = """    var terrain_column := Vector2i(cell.x, cell.z)
+          old = "    var terrain_height := int(surface_heights.get(Vector2i(cell.x, cell.z), _terrain_height_at(cell.x, cell.z)))"
+          new = """    var terrain_column := Vector2i(cell.x, cell.z)
               var terrain_height: int
               if surface_heights.has(terrain_column):
                   terrain_height = int(surface_heights[terrain_column])
               else:
                   terrain_height = _terrain_height_at(cell.x, cell.z)"""
-          if world.count(old_height) == 1:
-              world = world.replace(old_height, new_height, 1)
-              print("Fixed eager terrain-height fallback evaluation in base block lookup.")
-          else:
-              print("Base block height lookup pattern absent/already optimized; no change required.")
-          old_surface = "    var surface := int(surface_heights.get(column, _terrain_height_at(x, z)))"
-          new_surface = """    var surface: int
+          if world.count(old) == 1:
+              world = world.replace(old, new, 1)
+          old = "    var surface := int(surface_heights.get(column, _terrain_height_at(x, z)))"
+          new = """    var surface: int
               if surface_heights.has(column):
                   surface = int(surface_heights[column])
               else:
                   surface = _terrain_height_at(x, z)"""
-          if world.count(old_surface) == 1:
-              world = world.replace(old_surface, new_surface, 1)
-              print("Fixed eager terrain-height fallback evaluation in surface query.")
+          if world.count(old) == 1:
+              world = world.replace(old, new, 1)
           world_path.write_text(world)
 
-          # Daylight visual changes do not need to rewrite Environment/SkyMaterial at
-          # display refresh rates. Keep the day clock continuous, refresh sky/light at 10 Hz.
-          main_path = project / "scripts/main.gd"
-          main = main_path.read_text()
-          process_start = main.find("func _process(delta: float) -> void:")
-          process_end = main.find("\nfunc ", process_start + 1) if process_start >= 0 else -1
-          if process_start >= 0 and process_end > process_start:
-              process_func = main[process_start:process_end]
-              if "_update_daylight()" in process_func and "_mobile_daylight_accumulator" not in main:
-                  first_line_end = main.find("\n")
-                  main = main[:first_line_end + 1] + "var _mobile_daylight_accumulator: float = 0.0\n" + main[first_line_end + 1:]
-                  process_start = main.find("func _process(delta: float) -> void:")
-                  process_end = main.find("\nfunc ", process_start + 1)
-                  process_func = main[process_start:process_end]
-                  process_func = process_func.replace(
-                      "    _update_daylight()",
-                      "    _mobile_daylight_accumulator += delta\n"
-                      "    if _mobile_daylight_accumulator >= 0.1:\n"
-                      "        _mobile_daylight_accumulator = 0.0\n"
-                      "        _update_daylight()",
-                      1,
-                  )
-                  main = main[:process_start] + process_func + main[process_end:]
-                  print("Throttled environment/sky updates to 10 Hz.")
-              else:
-                  print("Daylight refresh already throttled or not a per-frame call.")
-          else:
-              print("No standalone Main._process found; daylight update was not patched.")
-          main_path.write_text(main)
-
-          # Stop a per-frame HUD call from allocating/style-applying four StyleBoxFlat
-          # resources every frame. Re-style only when sprint toggles.
+          # Lightweight Minecraft-style HUD refinement: use symbols for the two primary
+          # actions, soften the glass-like button fill, and center the health/hunger row
+          # above the hotbar. All existing touch signals/feature callbacks are preserved.
           hud_path = project / "scripts/mobile_hud.gd"
           hud = hud_path.read_text()
-          def replace_function(source, signature, body):
-              start = source.find(signature)
-              if start < 0:
-                  return source, False
-              end = source.find("\nfunc ", start + len(signature))
-              if end < 0:
-                  return source, False
-              return source[:start] + body.rstrip() + "\n\n" + source[end + 1:], True
-
-          sprint_body = """func set_sprint_text(enabled: bool) -> void:
-              var sprint_btn := root.get_node_or_null("SprintButton") as Button
-              if sprint_btn == null:
-                  _sprint_enabled = enabled
-                  return
-              if enabled == _sprint_enabled:
-                  return
-              _sprint_enabled = enabled
-              sprint_btn.text = "»"
-              sprint_btn.tooltip_text = "Toggle sprint"
-              sprint_btn.modulate = Color(1, 1, 1, 1)
-              _apply_mobile_button_style(sprint_btn, enabled, true)
-          """
-          hud, sprint_changed = replace_function(hud, "func set_sprint_text(enabled: bool) -> void:", sprint_body)
-          print("Disabled redundant per-frame sprint restyling." if sprint_changed else "Sprint setter not found; left unchanged.")
-
-          # Keep the hotbar and action controls but match the usual Minecraft layout:
-          # health/hunger indicators immediately above the centered hotbar, symbols
-          # instead of rectangular debug-style HIT/USE labels.
-          for old, new in [
-              ('_make_button("HIT", "BreakButton"', '_make_button("⛏", "BreakButton"'),
-              ('_make_button("USE", "PlaceButton"', '_make_button("▣", "PlaceButton"'),
-          ]:
-              if old in hud:
-                  hud = hud.replace(old, new, 1)
+          hud = hud.replace('_make_button("HIT", "BreakButton"', '_make_button("⛏", "BreakButton"', 1)
+          hud = hud.replace('_make_button("USE", "PlaceButton"', '_make_button("▣", "PlaceButton"', 1)
           hud = hud.replace("Color(0.075, 0.09, 0.11, 0.55)", "Color(0.055, 0.065, 0.078, 0.38)", 1)
           hud = hud.replace("Color(0.84, 0.88, 0.9, 0.50)", "Color(0.86, 0.89, 0.92, 0.36)", 1)
 
-          # Center health/hunger over the hotbar rather than pinning it to the top-right.
-          old_health_layout = """    health_label.anchor_left = 1.0
+          old_health = """health_label.anchor_left = 1.0
               health_label.anchor_right = 1.0
               health_label.anchor_top = 0.0
               health_label.anchor_bottom = 0.0
@@ -1420,7 +1174,7 @@ jobs:
               health_label.offset_top = 34.0
               health_label.offset_bottom = 57.0
               health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT"""
-          new_health_layout = """    health_label.anchor_left = 0.5
+          new_health = """health_label.anchor_left = 0.5
               health_label.anchor_right = 0.5
               health_label.anchor_top = 1.0
               health_label.anchor_bottom = 1.0
@@ -1429,17 +1183,13 @@ jobs:
               health_label.offset_top = -88.0
               health_label.offset_bottom = -62.0
               health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER"""
-          if hud.count(old_health_layout) == 1:
-              hud = hud.replace(old_health_layout, new_health_layout, 1)
-
-          old_adapt = """if health_label != null:
-                  health_label.offset_left = -290.0 * scale
+          if old_health in hud:
+              hud = hud.replace(old_health, new_health, 1)
+          old_layout = """health_label.offset_left = -290.0 * scale
                   health_label.offset_right = -122.0 * scale
                   health_label.offset_top = 33.0 * scale
-                  health_label.offset_bottom = 56.0 * scale
-                  health_label.add_theme_font_size_override("font_size", maxi(10, roundi(16.0 * scale)))"""
-          new_adapt = """if health_label != null:
-                  health_label.anchor_left = 0.5
+                  health_label.offset_bottom = 56.0 * scale"""
+          new_layout = """health_label.anchor_left = 0.5
                   health_label.anchor_right = 0.5
                   health_label.anchor_top = 1.0
                   health_label.anchor_bottom = 1.0
@@ -1447,16 +1197,17 @@ jobs:
                   health_label.offset_right = 175.0 * scale
                   health_label.offset_top = -88.0 * scale
                   health_label.offset_bottom = -62.0 * scale
-                  health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-                  health_label.add_theme_font_size_override("font_size", maxi(11, roundi(17.0 * scale)))"""
-          if old_adapt in hud:
-              hud = hud.replace(old_adapt, new_adapt, 1)
+                  health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER"""
+          if old_layout in hud:
+              hud = hud.replace(old_layout, new_layout, 1)
           hud_path.write_text(hud)
 
           final_settings = settings_path.read_text()
-          if 'renderer/rendering_method="gl_compatibility"' not in final_settings or 'renderer/rendering_method.mobile="gl_compatibility"' not in final_settings:
-              raise SystemExit("Compatibility rendering settings were not saved")
-          print("Configured GL Compatibility, safe hot-path changes, and Minecraft-style HUD polish.")
+          if 'renderer/rendering_method="gl_compatibility"' not in final_settings:
+              raise SystemExit("Primary Compatibility renderer setting missing")
+          if 'renderer/rendering_method.mobile="gl_compatibility"' not in final_settings:
+              raise SystemExit("Mobile Compatibility renderer setting missing")
+          print("Renderer set to GL Compatibility; eager height defaults fixed; HUD actions styled.")
           PY
       - name: Set up Java for Godot Android export
         uses: actions/setup-java@v4
@@ -1535,6 +1286,37 @@ jobs:
             echo "Spawn surface invariant was not logged."
             exit 1
           fi
+          # Use a real window and software OpenGL to test a rendered frame, not only startup.
+          mkdir -p "$RUNNER_TEMP/visual" "$GITHUB_WORKSPACE/visual-artifacts"
+          if ! command -v xvfb-run >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb ffmpeg
+          fi
+          timeout 120s xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$GODOT_BIN" --path "$PROJECT_DIR" --write-movie "$RUNNER_TEMP/visual/compatibility-smoke.avi" --fixed-fps 10 --resolution 1280x720 --quit-after 50 2>&1 | tee "$RUNNER_TEMP/godot-visual.log"
+          if grep -E "SCRIPT ERROR:|Parse Error:|Failed to load script|ERROR:" "$RUNNER_TEMP/godot-visual.log"; then
+            echo "Graphical Compatibility startup reported engine/script errors."
+            exit 1
+          fi
+          if ! grep -Eqi "OpenGL API|OpenGL ES" "$RUNNER_TEMP/godot-visual.log"; then
+            echo "Graphical smoke test did not initialize OpenGL/Compatibility."
+            exit 1
+          fi
+          test -s "$RUNNER_TEMP/visual/compatibility-smoke.avi"
+          ffmpeg -y -loglevel error -ss 3 -i "$RUNNER_TEMP/visual/compatibility-smoke.avi" -frames:v 1 "$RUNNER_TEMP/visual/compatibility-smoke.png"
+          python3 - "$RUNNER_TEMP/visual/compatibility-smoke.png" <<'PY'
+          from PIL import Image, ImageStat
+          import sys
+          image = Image.open(sys.argv[1]).convert("RGB")
+          stats = ImageStat.Stat(image)
+          mean = sum(stats.mean) / 3.0
+          spread = sum(stats.stddev) / 3.0
+          non_dark = sum(1 for r, g, b in image.getdata() if max(r, g, b) > 24) / (image.width * image.height)
+          print(f"Rendered frame stats: mean_rgb={mean:.1f}; spread={spread:.1f}; non_dark={non_dark:.1%}")
+          if mean < 18 or spread < 8 or non_dark < 0.10:
+              raise SystemExit("Rendered game frame is blank/near-black; refusing to publish APK.")
+          PY
+          cp "$RUNNER_TEMP/visual/compatibility-smoke.png" "$GITHUB_WORKSPACE/visual-artifacts/compatibility-smoke.png"
+          cp "$RUNNER_TEMP/godot-visual.log" "$GITHUB_WORKSPACE/visual-artifacts/godot-visual.log"
           echo "Headless startup smoke test passed."
           mkdir -p "$PROJECT_DIR/build"
           "$GODOT_BIN" --headless --path "$PROJECT_DIR" --export-debug "Android" "$PROJECT_DIR/build/Flatworld-Creative-debug.apk" 2>&1 | tee "$RUNNER_TEMP/godot-export.log"
@@ -1544,6 +1326,34 @@ jobs:
           fi
           test -s "$PROJECT_DIR/build/Flatworld-Creative-debug.apk"
           ls -lh "$PROJECT_DIR/build/Flatworld-Creative-debug.apk"
+          python3 - "$PROJECT_DIR" "$GITHUB_WORKSPACE/Flatworld-Creative-0.6.0-Source.zip" <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          import sys
+          project = Path(sys.argv[1])
+          output = Path(sys.argv[2])
+          with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=6) as archive:
+              for path in project.rglob("*"):
+                  if path.is_file() and ".godot" not in path.parts and "build" not in path.parts:
+                      archive.write(path, Path(project.name) / path.relative_to(project))
+          print(f"Matching source package created: {output.stat().st_size} bytes")
+          PY
+
+      - name: Publish patched source project
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flatworld-Creative-0.6.0-Source
+          path: Flatworld-Creative-0.6.0-Source.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish OpenGL Compatibility screenshot and logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flatworld-Creative-0.6.0-Visual-Smoke
+          path: visual-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Publish the APK as a workflow artifact
         uses: actions/upload-artifact@v4
