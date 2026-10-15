@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://ucaae7e615335acf287833b55c3f.dl.dropboxusercontent.com/cd/0/get/DKGQ8lGCIUFUiuyEcXbt5jb7KQ-MAYIhqul5yP_fARaUCT5GOZheGUjWCH6WoO6v37qEr3Q6i9ttM0PiSddezc9EE5aOYxZ6a81S-uIKb9apjfusfin4cLJ1Fzto1gMXYKljGCVIg5T-VkoUzgoHhBwj-MhVKO__ExOPm1uSTCNOLA/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uc761beee7428d9e4fa3af0bff1c.dl.dropboxusercontent.com/cd/0/get/DKFXiMynfQNWcy5GoV5kiibuhaNofvbbZfM9F0cKs56U85EeT_NlTGcXxgBuO7lRQOt-UOVSe8Uq7gN68D5hX7DDmYnyxqM0CpijUaNqKLmVC97j7pA4tAh8ai9IRbSJoLpIaxeVgpQphezvmLVgw-0AnGWmF-UWqzel7O0PQ-g7CQ/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1491,6 +1491,63 @@ jobs:
                   completed_line + '\n    print("CHUNK_LOAD_MS:", coord, " ", Time.get_ticks_msec() - _chunk_build_started_msec)',
                   1,
               )
+
+          # Speed up world loading by materializing underground solids only when a
+          # generated cave cell exposes their faces. Previously every buried stone voxel
+          # computed its block/ore and checked all six neighbours, although almost none of
+          # those buried solids became render geometry. Mining still resolves deterministic
+          # block ID via _base_block_at(), so ore/cave behaviour is preserved.
+          load_start = world.find("func _load_chunk(coord: Vector2i) -> void:")
+          load_end = world.find("\nfunc _base_block_at", load_start)
+          if load_start < 0 or load_end < 0:
+              raise SystemExit("Chunk-load function boundaries missing for cave-wall fast path")
+          load_func = world[load_start:load_end]
+          loop_marker = "    for x in range(x_start, x_start + CHUNK_SIZE):"
+          first_loop = load_func.find(loop_marker)
+          second_loop = load_func.find(loop_marker, first_loop + len(loop_marker))
+          if first_loop < 0 or second_loop < 0:
+              raise SystemExit("Could not isolate the second chunk-load column loop")
+          finish_marker = "    _generation_base_cache_active = false"
+          finish_at = load_func.find(finish_marker, second_loop)
+          if finish_at < 0:
+              raise SystemExit("Chunk-load cache cleanup marker missing")
+          materialize_loop = "\n".join([
+              "    for x in range(x_start, x_start + CHUNK_SIZE):",
+              "        for z in range(z_start, z_start + CHUNK_SIZE):",
+              "            var terrain_height := int(surface_heights[Vector2i(x, z)])",
+              "            var top_y := terrain_height",
+              '            if dimension_id == "overworld" and terrain_height < SEA_LEVEL:',
+              "                top_y = SEA_LEVEL",
+              '            elif dimension_id == "nether":',
+              "                top_y = 127",
+              '            if dimension_id == "overworld":',
+              "                for y in range(MIN_WORLD_Y, top_y + 1):",
+              "                    var cell := Vector3i(x, y, z)",
+              "                    if y < terrain_height - 4 and y > MIN_WORLD_Y + 5:",
+              "                        if _is_cave_cell(cell, terrain_height):",
+              "                            for direction in DIRECTIONS:",
+              "                                var wall_cell := cell + direction",
+              "                                if _chunk_for_cell(wall_cell) != coord or blocks.has(wall_cell):",
+              "                                    continue",
+              "                                var wall_id := _base_block_at(wall_cell)",
+              '                                if wall_id != "air" and _base_cell_has_visible_face(wall_cell, wall_id):',
+              "                                    _write_generated_block(coord, wall_cell, wall_id)",
+              "                        continue",
+              "                    var block_id := _base_block_at(cell)",
+              '                    if block_id != "air" and _base_cell_has_visible_face(cell, block_id):',
+              "                        _write_generated_block(coord, cell, block_id)",
+              "            else:",
+              "                for y in range(MIN_WORLD_Y, top_y + 1):",
+              "                    var cell := Vector3i(x, y, z)",
+              "                    var block_id := _base_block_at(cell)",
+              '                    if block_id != "air" and _base_cell_has_visible_face(cell, block_id):',
+              "                        _write_generated_block(coord, cell, block_id)",
+              "",
+          ])
+          load_func = load_func[:second_loop] + materialize_loop + load_func[finish_at:]
+          world = world[:load_start] + load_func + world[load_end:]
+          if "if _is_cave_cell(cell, terrain_height):" not in world:
+              raise SystemExit("Cave-wall generation fast path assertion missing")
 
           world_path.write_text(world)
 
