@@ -326,6 +326,8 @@ jobs:
           # Replace the cubic spawn search (re-scanning every inner square at each
           # radius) with a true perimeter scan; keep the same nearest-safe-column rule.
           spawn_start = world.find("func get_spawn_position() -> Vector3:")
+          if spawn_start < 0:
+              spawn_start = world.find("func _find_spawn_position() -> Vector3:")
           spawn_end = world.find("\nfunc grow_poplar_sapling", spawn_start)
           if spawn_start < 0 or spawn_end < 0:
               raise SystemExit("safe spawn method markers missing")
@@ -378,7 +380,6 @@ jobs:
           world = world.replace(
               "func _find_spawn_position() -> Vector3:",
               "func get_spawn_position() -> Vector3:\n    if _spawn_cache_valid:\n        return _spawn_position_cache\n    return _find_spawn_position()\n\nfunc _find_spawn_position() -> Vector3:", 1)
-          world_path.write_text(world)
           world_path.write_text(world)
 
           # ----- Main scene: rescue invalid saved positions and trim mobile shadows -----
