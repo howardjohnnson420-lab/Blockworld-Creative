@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uca36de7fc71d3693d8ade5e45fa.dl.dropboxusercontent.com/cd/0/get/DKH2-Ge-UOPss3tJ5u6VtUv0AtFqsfpObYCyTkXw_6yso7yE3lj02blWIuNOiPyNU1yDk089EkdTi7IVb5OYG0e8ltGIsM-7nfeNEgyWzVXPfNSBsKJ2BKlT19KDituXhgNPoPfC2xWjJ1fiFg0x55NDf32PhMYILh15hmSv0w9g-w/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://uc36e64bf3d060d3e1d87ffe7fad.dl.dropboxusercontent.com/cd/0/get/DKFAqWvJphO7fkskgpbn8b-cXaoFZZ1PydvYRII4gZ4Jrdd4dHtrSPgf5KYyUzj45eRX52BlLn3tADNETz6vmcfW0L1bHrM8vGz-Ay4NzvyoonLReOeeC1ATly-9rzZostRDExwcymauxujGPxKw0aoMYRmjmwHjI4g6kTgI3hhL4g/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -121,6 +121,7 @@ jobs:
           text = path.read_text()
           replacements = {
               "func _ready() -> void:\n    BlockRegistry.load_data()\n": "func _ready() -> void:\n    print(\"Flatworld startup: entering Main._ready\")\n    BlockRegistry.load_data()\n    print(\"Flatworld startup: registries loaded\")\n",
+              "    pending_smelt = saved.get(\"pending_smelt\", []) if saved.get(\"pending_smelt\", []) is Array else []\n": "    var saved_pending_smelt: Variant = saved.get(\"pending_smelt\", [])\n    pending_smelt.clear()\n    if saved_pending_smelt is Array:\n        for pending_entry in saved_pending_smelt:\n            if pending_entry is Dictionary:\n                pending_smelt.append(pending_entry)\n",
               "    _create_environment()\n": "    _create_environment()\n    print(\"Flatworld startup: environment created\")\n",
               "    world.generate_world(world_seed, initial_dimension)\n": "    print(\"Flatworld startup: generating spawn chunk\")\n    world.generate_world(world_seed, initial_dimension)\n    print(\"Flatworld startup: spawn chunk generated\")\n",
               "    add_child(player)\n    player.spawn_position": "    add_child(player)\n    print(\"Flatworld startup: player camera created\")\n    player.spawn_position",
