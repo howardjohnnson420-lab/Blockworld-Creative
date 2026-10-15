@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch the exact uploaded project ZIP
         env:
-          PROJECT_ZIP_URL: "https://uc44094cc8617f73d93e88ed4a0a.dl.dropboxusercontent.com/cd/0/get/DKH4dLUw1uO8Og7yAHzCw8EJ81a64RC_3nIth5N1iU-JbEA00_y6J6Tnl4wLvczaHjJTWpmWJEjHdUGCAnneXHgOgRmvUNiqkmomOoPnewr2aoI-qUxmTPFpLRMMiTl9rCOYvwiUG2krWlhH9dHj8mj2Rrf1gr-CcZ1mlINrwb-kZQ/file?c_luid=281c495f"
+          PROJECT_ZIP_URL: "https://ucb95ee3f0111b7153821ae611ba.dl.dropboxusercontent.com/cd/0/get/DKE3sUr5Si17ez5_XH3tfzOjSqwHRe_jKR8kTCYjfzB7iRJuuNxPfYBBTo-U732_EjMxhHyV13cv-Jat1rvtLirCKfVakRKzrcXPmKkEgvPwKvIuoC8FwgWTVOOygmle6Bh67GbgHDLXMPEWHX7ZH1h4xv2MMGzoP2oiKsvhAuKT-w/file?c_luid=281c495f"
         run: |
           set -euo pipefail
           curl --fail --location --show-error "$PROJECT_ZIP_URL" --output "$RUNNER_TEMP/project.zip"
@@ -1769,9 +1769,13 @@ jobs:
           # ambient light. Saved-world time is left untouched.
           main = main_path.read_text()
           old_day = 'saved.get("day_time", 1000.0)'
-          if main.count(old_day) != 1:
-              raise SystemExit("New-world daylight default anchor missing")
-          main = main.replace(old_day, 'saved.get("day_time", 6000.0)', 1)
+          bright_day = 'saved.get("day_time", 6000.0)'
+          if main.count(old_day) == 1:
+              main = main.replace(old_day, bright_day, 1)
+          elif main.count(bright_day) == 1:
+              pass
+          else:
+              raise SystemExit("New-world daylight default is ambiguous; refusing to patch blindly")
           main_path.write_text(main)
           print("Added terrain+vegetation clearance and a bright new-world starting time.")
           PY
